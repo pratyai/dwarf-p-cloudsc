@@ -44,7 +44,7 @@ int main( int argc, char *argv[] ) {
     cloudsc_driver(omp_threads, ngptot, nproma);
   }
   else {
-    printf("Calling c-cloudsc with the right number of arguments will work better ;-) \n",argc);
+    printf("Calling c-cloudsc with the right number of arguments will work better (got %d arguments) ;-) \n", argc);
     return_code = EXIT_FAILURE;
   }
 

@@ -26,6 +26,7 @@ list(APPEND CLOUDSC_COMMON_SOURCES
     module/validate_mod.F90
     module/cloudsc_global_state_mod.F90
     module/cloudsc_mpi_mod.F90
+    module/double_word_arithmetic.F90
 )
 
 list(APPEND CLOUDSC_CUDA_SOURCES
