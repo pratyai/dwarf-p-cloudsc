@@ -369,3 +369,8 @@ contains
   end subroutine
 
 end module double_word_conversion_module
+
+module double_word_arithmetic
+  use double_word_sp_module, only : dw => double_word_sp, rp => sp, operator(+)
+  use double_word_conversion_module, only : dw2dp => convert_dw_sp_to_dp
+end module double_word_arithmetic
