@@ -140,9 +140,13 @@ contains
     integer(kind=jpim), intent(in), optional :: ngptotg
     real(kind=jprb), allocatable :: buffer(:,:,:)
     integer(kind=jpim) :: start, end, size
+    real(kind=jprb), allocatable :: tmp(:,:,:)
+    real(kind=jprb), allocatable :: tmp2(:,:,:,:)
 
     integer :: b
 
+    allocate(tmp(nproma, nlev, nblocks))
+    allocate(tmp2(nproma, nlev, ndim, nblocks))
     call get_offsets(start, end, size, nlon, ndim, nlev, ngptot, ngptotg)
     if (.not. allocated(state))  allocate(state(nblocks))
     if (.not. allocated(field))  allocate(field(nproma, nlev, 3+ndim, nblocks))
@@ -153,10 +157,18 @@ contains
     call load_array(name//'_Q', start, end, size, nlon, nlev, buffer(:,:,3))
     call load_array(name//'_CLD', start, end, size, nlon, nlev, ndim, buffer(:,:,4:))
 
-    call expand(buffer(:,:,1), field(:,:,1,:), size, nproma, nlev, ngptot, nblocks)
-    call expand(buffer(:,:,2), field(:,:,2,:), size, nproma, nlev, ngptot, nblocks)
-    call expand(buffer(:,:,3), field(:,:,3,:), size, nproma, nlev, ngptot, nblocks)
-    call expand(buffer(:,:,4:), field(:,:,4:,:), size, nproma, nlev, ndim, ngptot, nblocks)
+    tmp = field(:,:,1,:)
+    call expand(buffer(:,:,1), tmp, size, nproma, nlev, ngptot, nblocks)
+    field(:,:,1,:) = tmp
+    tmp = field(:,:,2,:)
+    call expand(buffer(:,:,2), tmp, size, nproma, nlev, ngptot, nblocks)
+    field(:,:,2,:) = tmp
+    tmp = field(:,:,3,:)
+    call expand(buffer(:,:,3), tmp, size, nproma, nlev, ngptot, nblocks)
+    field(:,:,3,:) = tmp
+    tmp2 = field(:,:,4:,:)
+    call expand(buffer(:,:,4:), tmp2, size, nproma, nlev, ndim, ngptot, nblocks)
+    field(:,:,4:,:) = tmp2
     deallocate(buffer)
 
 !$OMP PARALLEL DO DEFAULT(SHARED), PRIVATE(B) schedule(runtime)
@@ -168,6 +180,8 @@ contains
     end do
 !$OMP end parallel do
 
+    deallocate(tmp)
+    deallocate(tmp2)
   end subroutine load_and_expand_state
 
   subroutine expand_l1(buffer, field, nlon, nproma, ngptot, nblocks)
