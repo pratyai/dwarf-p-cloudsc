@@ -13,6 +13,7 @@ MODULE CLOUDSC_DRIVER_MOD
   USE YOECLDP, ONLY : NCLV
   USE CLOUDSC_MPI_MOD, ONLY: NUMPROC, IRANK
   USE TIMER_MOD, ONLY : PERFORMANCE_TIMER, GET_THREAD_NUM
+  use double_word_hp_library
 
   IMPLICIT NONE
 
@@ -106,6 +107,8 @@ CONTAINS
     TYPE(TOETHF)    :: YDOETHF
     TYPE(TECLDP)    :: YDECLDP
 
+    type(double_word) :: TENDENCY_LOC_CLD(NPROMA, NLEV, NCLV)
+
     NGPBLKS = (NGPTOT / NPROMA) + MIN(MOD(NGPTOT,NPROMA), 1)
 1003 format(5x,'NUMPROC=',i0,', NUMOMP=',i0,', NGPTOTG=',i0,', NPROMA=',i0,', NGPBLKS=',i0)
     if (irank == 0) then
@@ -115,7 +118,7 @@ CONTAINS
     ! Global timer for the parallel region
     CALL TIMER%START(NUMOMP)
 
-    !$omp parallel default(shared) private(JKGLO,IBL,ICEND,TID) &
+    !$omp parallel default(shared) private(JKGLO,IBL,ICEND,TID,TENDENCY_LOC_CLD) &
     !$omp& num_threads(NUMOMP)
 
     ! Local timer for each thread
@@ -124,42 +127,46 @@ CONTAINS
 
     !$omp do schedule(runtime)
     DO JKGLO=1,NGPTOT,NPROMA
-       IBL=(JKGLO-1)/NPROMA+1
-       ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
+      IBL=(JKGLO-1)/NPROMA+1
+      ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
 
-         !-- These were uninitialized : meaningful only when we compare error differences
-         PCOVPTOT(:,:,IBL) = 0.0_JPRB
-         TENDENCY_LOC(IBL)%cld(:,:,NCLV) = 0.0_JPRB
+      if (any(shape(TENDENCY_LOC(IBL)%cld) /= shape(TENDENCY_LOC_CLD))) error stop "die!"
 
-         CALL CLOUDSC &
-              & (    1,    ICEND,    NPROMA,  NLEV,&
-              & PTSPHY,&
-              & PT(:,:,IBL), PQ(:,:,IBL), &
-              & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, TENDENCY_TMP(IBL)%CLD, &
-              & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC(IBL)%CLD, &
-              & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
-              & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
-              & PVERVEL(:,:,IBL),  PAP(:,:,IBL),      PAPH(:,:,IBL),&
-              & PLSM(:,IBL),       LDCUM(:,IBL),      KTYPE(:,IBL), &
-              & PLU(:,:,IBL),      PLUDE(:,:,IBL),    PSNDE(:,:,IBL),    PMFU(:,:,IBL),     PMFD(:,:,IBL),&
-              !---prognostic fields
-              & PA(:,:,IBL),       PCLV(:,:,:,IBL),   PSUPSAT(:,:,IBL),&
-              !-- arrays for aerosol-cloud interactions
-              & PLCRIT_AER(:,:,IBL),PICRIT_AER(:,:,IBL),&
-              & PRE_ICE(:,:,IBL),&
-              & PCCN(:,:,IBL),     PNICE(:,:,IBL),&
-              !---diagnostic output
-              & PCOVPTOT(:,:,IBL), PRAINFRAC_TOPRFZ(:,IBL),&
-              !---resulting fluxes
-              & PFSQLF(:,:,IBL),   PFSQIF (:,:,IBL),  PFCQNNG(:,:,IBL),  PFCQLNG(:,:,IBL),&
-              & PFSQRF(:,:,IBL),   PFSQSF (:,:,IBL),  PFCQRNG(:,:,IBL),  PFCQSNG(:,:,IBL),&
-              & PFSQLTUR(:,:,IBL), PFSQITUR (:,:,IBL), &
-              & PFPLSL(:,:,IBL),   PFPLSN(:,:,IBL),   PFHPSL(:,:,IBL),   PFHPSN(:,:,IBL),&
-              & KFLDX, &
-              & YDOMCST, YDOETHF, YDECLDP)
+      !-- These were uninitialized : meaningful only when we compare error differences
+      PCOVPTOT(:,:,IBL) = 0.0_JPRB
+      TENDENCY_LOC_CLD(:, :, NCLV) = double_word()
 
-         ! Log number of columns processed by this thread
-         CALL TIMER%THREAD_LOG(TID, IGPC=ICEND)
+      CALL CLOUDSC &
+          & (    1,    ICEND,    NPROMA,  NLEV,&
+          & PTSPHY,&
+          & PT(:,:,IBL), PQ(:,:,IBL), &
+          & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, TENDENCY_TMP(IBL)%CLD, &
+          & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC_CLD, &
+          & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
+          & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
+          & PVERVEL(:,:,IBL),  PAP(:,:,IBL),      PAPH(:,:,IBL),&
+          & PLSM(:,IBL),       LDCUM(:,IBL),      KTYPE(:,IBL), &
+          & PLU(:,:,IBL),      PLUDE(:,:,IBL),    PSNDE(:,:,IBL),    PMFU(:,:,IBL),     PMFD(:,:,IBL),&
+          !---prognostic fields
+          & PA(:,:,IBL),       PCLV(:,:,:,IBL),   PSUPSAT(:,:,IBL),&
+          !-- arrays for aerosol-cloud interactions
+          & PLCRIT_AER(:,:,IBL),PICRIT_AER(:,:,IBL),&
+          & PRE_ICE(:,:,IBL),&
+          & PCCN(:,:,IBL),     PNICE(:,:,IBL),&
+          !---diagnostic output
+          & PCOVPTOT(:,:,IBL), PRAINFRAC_TOPRFZ(:,IBL),&
+          !---resulting fluxes
+          & PFSQLF(:,:,IBL),   PFSQIF (:,:,IBL),  PFCQNNG(:,:,IBL),  PFCQLNG(:,:,IBL),&
+          & PFSQRF(:,:,IBL),   PFSQSF (:,:,IBL),  PFCQRNG(:,:,IBL),  PFCQSNG(:,:,IBL),&
+          & PFSQLTUR(:,:,IBL), PFSQITUR (:,:,IBL), &
+          & PFPLSL(:,:,IBL),   PFPLSN(:,:,IBL),   PFHPSL(:,:,IBL),   PFHPSN(:,:,IBL),&
+          & KFLDX, &
+          & YDOMCST, YDOETHF, YDECLDP)
+
+        call convert_array_from_dw(TENDENCY_LOC_CLD, TENDENCY_LOC(IBL)%CLD)
+
+        ! Log number of columns processed by this thread
+        CALL TIMER%THREAD_LOG(TID, IGPC=ICEND)
       ENDDO
 
       !-- The "nowait" is here to get correct local timings (tloc) per thread

@@ -138,6 +138,7 @@ USE YOECLDP  , ONLY : TECLDP
 USE YOEPHLI  , ONLY : TEPHLI
 USE YOMCST   , ONLY : TOMCST
 USE YOETHF   , ONLY : TOETHF
+use double_word_hp_library
 IMPLICIT NONE
 
 !-------------------------------------------------------------------------------
@@ -171,7 +172,7 @@ REAL(KIND=JPRB)   ,INTENT(IN)    :: PTENDENCY_TMP_CLD(KLON,KLEV,NCLV) ! CLD cumu
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_T(KLON,KLEV)   ! T local output tendency
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_Q(KLON,KLEV)   ! Q local output tendency
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_A(KLON,KLEV)   ! A local output tendency
-REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_CLD(KLON,KLEV,NCLV) ! CLD local output tendency
+type(double_word)          ,INTENT(INOUT)   :: PTENDENCY_LOC_CLD(KLON,KLEV,NCLV) ! CLD local output tendency
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFA(KLON,KLEV)  ! CC from VDF scheme
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFL(KLON,KLEV)  ! Liq from VDF scheme
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFI(KLON,KLEV)  ! Ice from VDF scheme
@@ -636,7 +637,7 @@ ENDDO
 DO JM=1,NCLV-1
   DO JK=1,KLEV
     DO JL=KIDIA,KFDIA
-      PTENDENCY_LOC_CLD(JL,JK,JM)=0.0_JPRB
+      PTENDENCY_LOC_CLD(JL,JK,JM)=double_word()
     ENDDO
   ENDDO
 ENDDO
@@ -2755,7 +2756,9 @@ ENDIF ! on IEVAPSNOW
       !       include the tendency already in PTENDENCY_LOC_T and PTENDENCY_LOC_Q. ZQX was reset
       !----------------------------------------------------------------------
     DO JL=KIDIA,KFDIA
-      PTENDENCY_LOC_CLD(JL,JK,JM)=PTENDENCY_LOC_CLD(JL,JK,JM)+(ZQXN(JL,JM)-ZQX0(JL,JK,JM))*ZQTMST
+      PTENDENCY_LOC_CLD(JL,JK,JM) = PTENDENCY_LOC_CLD(JL,JK,JM) + to_dw((ZQXN(JL,JM)-ZQX0(JL,JK,JM))*ZQTMST)
+      ! PTENDENCY_LOC_CLD(JL,JK,JM) = PTENDENCY_LOC_CLD(JL,JK,JM) + &
+        ! & (dw(ZQXN(JL,JM), 0) - dw(ZQX0(JL,JK,JM), 0)) * real(ZQTMST, kind=rp)
     ENDDO
 
   ENDDO
