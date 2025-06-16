@@ -13,7 +13,7 @@ MODULE CLOUDSC_DRIVER_MOD
   USE YOECLDP, ONLY : NCLV
   USE CLOUDSC_MPI_MOD, ONLY: NUMPROC, IRANK
   USE TIMER_MOD, ONLY : PERFORMANCE_TIMER, GET_THREAD_NUM
-  use double_word_hp_library
+  use double_word_hp_library, only : rp
 
   IMPLICIT NONE
 
@@ -107,18 +107,42 @@ CONTAINS
     TYPE(TOETHF)    :: YDOETHF
     TYPE(TECLDP)    :: YDECLDP
 
-    type(double_word), allocatable :: TENDENCY_LOC_CLD(:,:,:,:)
-    type(double_word), allocatable :: PCLV_rp(:,:,:,:)
+    REAL(KIND=JPRB), allocatable :: TENDENCY_TMP_CLD(:,:,:,:)
+    REAL(KIND=JPRB), allocatable :: TENDENCY_TMP_CLD_SCALE(:)
+    REAL(KIND=JPRB), allocatable :: TENDENCY_LOC_CLD(:,:,:,:)
+    REAL(KIND=JPRB), allocatable :: TENDENCY_LOC_CLD_SCALE(:)
+    REAL(KIND=rp), allocatable:: PCLV_rp(:,:,:,:)
+    REAL(KIND=JPRB), allocatable :: PCLV_rp_SCALE(:)
 
     NGPBLKS = (NGPTOT / NPROMA) + MIN(MOD(NGPTOT,NPROMA), 1)
 
+    ! PREEMPTIVE WORK OUTSIDE TIMER.
     allocate(TENDENCY_LOC_CLD(NPROMA, NLEV, NCLV, NGPBLKS))
+    allocate(TENDENCY_LOC_CLD_SCALE(NGPBLKS))
+    allocate(TENDENCY_TMP_CLD(NPROMA, NLEV, NCLV, NGPBLKS))
+    allocate(TENDENCY_TMP_CLD_SCALE(NGPBLKS))
     allocate(PCLV_rp(NPROMA, NLEV, NCLV, NGPBLKS))
+    allocate(PCLV_rp_SCALE(NGPBLKS))
+    print *, storage_size(TENDENCY_LOC_CLD(1,1,1,1))
+    print *, storage_size(TENDENCY_LOC_CLD_SCALE(1))
+    print *, maxval(PCLV), minval(PCLV)
     !$OMP SIMD
-    do IBL=1,NGPBLKS
-      call convert_array_to_dw(TENDENCY_LOC(IBL)%CLD, TENDENCY_LOC_CLD(:,:,:,IBL))
-      call convert_array_to_dw(PCLV(:,:,:,IBL), PCLV_rp(:,:,:,IBL))
-    end do
+    DO JKGLO=1,NGPTOT,NPROMA
+      IBL=(JKGLO-1)/NPROMA+1
+
+      TENDENCY_LOC_CLD_SCALE(IBL) = maxval(TENDENCY_LOC(IBL)%CLD(:,:,:))
+      if (abs(TENDENCY_LOC_CLD_SCALE(IBL)) == 0.0_rp) TENDENCY_LOC_CLD_SCALE(IBL) = 1.0_JPRB
+      TENDENCY_LOC_CLD(:,:,:,IBL) = TENDENCY_LOC(IBL)%CLD(:,:,:) / TENDENCY_LOC_CLD_SCALE(IBL)
+
+      TENDENCY_TMP_CLD_SCALE(IBL) = maxval(TENDENCY_TMP(IBL)%CLD(:,:,:))
+      if (abs(TENDENCY_TMP_CLD_SCALE(IBL)) == 0.0_rp) TENDENCY_TMP_CLD_SCALE(IBL) = 1.0_JPRB
+      TENDENCY_TMP_CLD(:,:,:,IBL) = TENDENCY_TMP(IBL)%CLD(:,:,:) / TENDENCY_TMP_CLD_SCALE(IBL)
+
+      PCLV_rp_SCALE(IBL) = maxval(PCLV(:,:,:,IBL))
+      if (abs(PCLV_rp_SCALE(IBL)) == 0.0_rp) PCLV_rp_SCALE(IBL) = 1.0_JPRB
+      PCLV_rp_SCALE(IBL) = 1.0_JPRB
+      PCLV_rp(:,:,:,IBL) = PCLV(:,:,:,IBL) / PCLV_rp_SCALE(IBL)
+    END DO
 
 1003 format(5x,'NUMPROC=',i0,', NUMOMP=',i0,', NGPTOTG=',i0,', NPROMA=',i0,', NGPBLKS=',i0)
     if (irank == 0) then
@@ -137,26 +161,31 @@ CONTAINS
 
     !$omp do schedule(runtime)
     DO JKGLO=1,NGPTOT,NPROMA
-      IBL=(JKGLO-1)/NPROMA+1
-      ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
+       IBL=(JKGLO-1)/NPROMA+1
+       ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
 
+      if (any(shape(TENDENCY_LOC(IBL)%cld) /= shape(TENDENCY_LOC_CLD(:,:,:,IBL)))) error stop "die!"
       !-- These were uninitialized : meaningful only when we compare error differences
       PCOVPTOT(:,:,IBL) = 0.0_JPRB
-      TENDENCY_LOC_CLD(:, :, NCLV, IBL) = double_word()
+      TENDENCY_LOC_CLD(:,:,NCLV,IBL) = 0.0_rp
+      ! TESTING
+      ! PCLV_rp_SCALE(IBL) = 1.0_JPRB
+      ! TENDENCY_TMP_CLD_SCALE(IBL) = 1.0_JPRB
+      ! TENDENCY_LOC_CLD_SCALE(IBL) = 1.0_JPRB
 
       CALL CLOUDSC &
           & (    1,    ICEND,    NPROMA,  NLEV,&
           & PTSPHY,&
           & PT(:,:,IBL), PQ(:,:,IBL), &
-          & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, TENDENCY_TMP(IBL)%CLD, &
-          & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC_CLD(:,:,:,IBL), &
+          & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, TENDENCY_TMP_CLD(:,:,:,IBL), TENDENCY_TMP_CLD_SCALE(IBL), &
+          & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC_CLD(:,:,:,IBL), TENDENCY_LOC_CLD_SCALE(IBL), &
           & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
           & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
           & PVERVEL(:,:,IBL),  PAP(:,:,IBL),      PAPH(:,:,IBL),&
           & PLSM(:,IBL),       LDCUM(:,IBL),      KTYPE(:,IBL), &
           & PLU(:,:,IBL),      PLUDE(:,:,IBL),    PSNDE(:,:,IBL),    PMFU(:,:,IBL),     PMFD(:,:,IBL),&
           !---prognostic fields
-          & PA(:,:,IBL),       PCLV_rp(:,:,:,IBL),   PSUPSAT(:,:,IBL),&
+          & PA(:,:,IBL),       PCLV_rp(:,:,:,IBL), PCLV_rp_SCALE(IBL),   PSUPSAT(:,:,IBL),&
           !-- arrays for aerosol-cloud interactions
           & PLCRIT_AER(:,:,IBL),PICRIT_AER(:,:,IBL),&
           & PRE_ICE(:,:,IBL),&
@@ -171,28 +200,30 @@ CONTAINS
           & KFLDX, &
           & YDOMCST, YDOETHF, YDECLDP)
 
-      ! call convert_array_from_dw(TENDENCY_LOC_CLD(:,:,:,IBL), TENDENCY_LOC(IBL)%CLD)
 
       ! Log number of columns processed by this thread
       CALL TIMER%THREAD_LOG(TID, IGPC=ICEND)
     ENDDO
 
-      !-- The "nowait" is here to get correct local timings (tloc) per thread
-      !   i.e. we should not wait for slowest thread to finish before measuring tloc
-      !$omp end do nowait
+    !-- The "nowait" is here to get correct local timings (tloc) per thread
+    !   i.e. we should not wait for slowest thread to finish before measuring tloc
+    !$omp end do nowait
 
-      CALL TIMER%THREAD_END(TID)
+    CALL TIMER%THREAD_END(TID)
 
-      !$omp end parallel
+    !$omp end parallel
 
-      CALL TIMER%END()
+    CALL TIMER%END()
 
-      CALL TIMER%PRINT_PERFORMANCE(NPROMA, NGPBLKS, NGPTOT)
+    CALL TIMER%PRINT_PERFORMANCE(NPROMA, NGPBLKS, NGPTOT)
 
-    do IBL=1,NGPBLKS
-      call convert_array_from_dw(TENDENCY_LOC_CLD(:,:,:,IBL), TENDENCY_LOC(IBL)%CLD)
-    end do
-    deallocate(TENDENCY_LOC_CLD, PCLV_rp)
+    ! PREEMPTIVE WORK OUTSIDE TIMER.
+    DO JKGLO=1,NGPTOT,NPROMA
+      IBL=(JKGLO-1)/NPROMA+1
+      TENDENCY_LOC(IBL)%CLD(:,:,:) = TENDENCY_LOC_CLD(:,:,:,IBL) * TENDENCY_LOC_CLD_SCALE(IBL)
+    END DO
+    print *, maxval(TENDENCY_LOC_CLD)
+    deallocate(TENDENCY_LOC_CLD, TENDENCY_LOC_CLD_SCALE, TENDENCY_TMP_CLD, TENDENCY_TMP_CLD_SCALE, PCLV_rp, PCLV_rp_SCALE)
 
   END SUBROUTINE CLOUDSC_DRIVER
 

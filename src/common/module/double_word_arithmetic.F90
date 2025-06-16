@@ -15,11 +15,12 @@
 ! ====================================================================
 module double_word_hp_library
   use, intrinsic :: ieee_arithmetic, only : ieee_fma
+  use, intrinsic :: iso_fortran_env
   implicit none
   private
 
-  integer, parameter :: rp = selected_real_kind(p=10, r=4)
-  integer, parameter :: source_rp = selected_real_kind(p=15, r=307)
+  integer, parameter :: rp = real32
+  integer, parameter :: source_rp = real64
 
   public :: rp, source_rp, double_word
   public :: operator(+), operator(-), operator(*), operator(/)
@@ -219,11 +220,12 @@ end module double_word_hp_library
 ! ====================================================================
 module double_word_sp_library
   use, intrinsic :: ieee_arithmetic, only : ieee_fma
+  use, intrinsic :: iso_fortran_env
   implicit none
   private
 
-  integer, parameter :: rp = selected_real_kind(p=6, r=37)
-  integer, parameter :: source_rp = selected_real_kind(p=15, r=307)
+  integer, parameter :: rp = real32
+  integer, parameter :: source_rp = real64
 
   public :: rp, source_rp, double_word
   public :: operator(+), operator(-), operator(*), operator(/)
@@ -372,11 +374,12 @@ end module double_word_sp_library
 ! ====================================================================
 module double_word_dp_library
   use, intrinsic :: ieee_arithmetic, only : ieee_fma
+  use, intrinsic :: iso_fortran_env
   implicit none
   private
 
-  integer, parameter :: rp = selected_real_kind(p=15, r=307)
-  integer, parameter :: source_rp = rp
+  integer, parameter :: rp = real64
+  integer, parameter :: source_rp = real64
 
   public :: rp, source_rp, double_word
   public :: operator(+), operator(-), operator(*), operator(/)

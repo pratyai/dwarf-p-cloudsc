@@ -8,12 +8,11 @@
 ! nor does it submit to any jurisdiction.
 
 MODULE CLOUDSC_DRIVER_MOD
-  USE PARKIND1, ONLY: JPIM, JPIB, JPRB, JPRD
+  USE PARKIND1, ONLY: JPIM, JPIB, JPRB, JPRD, JPRM
   USE YOMPHYDER, ONLY: STATE_TYPE
   USE YOECLDP, ONLY : NCLV
   USE CLOUDSC_MPI_MOD, ONLY: NUMPROC, IRANK
   USE TIMER_MOD, ONLY : PERFORMANCE_TIMER, GET_THREAD_NUM
-  use double_word_hp_library
 
   IMPLICIT NONE
 
@@ -107,18 +106,21 @@ CONTAINS
     TYPE(TOETHF)    :: YDOETHF
     TYPE(TECLDP)    :: YDECLDP
 
-    type(double_word), allocatable :: TENDENCY_LOC_CLD(:,:,:,:)
-    type(double_word), allocatable :: PCLV_rp(:,:,:,:)
+    real(kind=JPRM), allocatable :: TENDENCY_TMP_CLD(:,:,:,:)
+    real(kind=JPRM), allocatable :: TENDENCY_LOC_CLD(:,:,:,:)
+    real(kind=JPRM), allocatable :: PCLV_rp(:,:,:,:)
 
     NGPBLKS = (NGPTOT / NPROMA) + MIN(MOD(NGPTOT,NPROMA), 1)
 
+    allocate(TENDENCY_TMP_CLD(NPROMA, NLEV, NCLV, NGPBLKS))
     allocate(TENDENCY_LOC_CLD(NPROMA, NLEV, NCLV, NGPBLKS))
     allocate(PCLV_rp(NPROMA, NLEV, NCLV, NGPBLKS))
-    !$OMP SIMD
-    do IBL=1,NGPBLKS
-      call convert_array_to_dw(TENDENCY_LOC(IBL)%CLD, TENDENCY_LOC_CLD(:,:,:,IBL))
-      call convert_array_to_dw(PCLV(:,:,:,IBL), PCLV_rp(:,:,:,IBL))
-    end do
+    ! !$OMP SIMD
+    ! do IBL=1,NGPBLKS
+    !   TENDENCY_TMP_CLD(:,:,:,IBL) = TENDENCY_TMP(IBL)%CLD
+    !   PCLV_rp(:,:,:,IBL) = PCLV(:,:,:,IBL)
+    ! end do
+
 
 1003 format(5x,'NUMPROC=',i0,', NUMOMP=',i0,', NGPTOTG=',i0,', NPROMA=',i0,', NGPBLKS=',i0)
     if (irank == 0) then
@@ -137,45 +139,43 @@ CONTAINS
 
     !$omp do schedule(runtime)
     DO JKGLO=1,NGPTOT,NPROMA
-      IBL=(JKGLO-1)/NPROMA+1
-      ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
+       IBL=(JKGLO-1)/NPROMA+1
+       ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
 
-      !-- These were uninitialized : meaningful only when we compare error differences
-      PCOVPTOT(:,:,IBL) = 0.0_JPRB
-      TENDENCY_LOC_CLD(:, :, NCLV, IBL) = double_word()
+         !-- These were uninitialized : meaningful only when we compare error differences
+         PCOVPTOT(:,:,IBL) = 0.0_JPRB
+         TENDENCY_LOC_CLD(:,:,NCLV,IBL) = 0.0_JPRB
 
-      CALL CLOUDSC &
-          & (    1,    ICEND,    NPROMA,  NLEV,&
-          & PTSPHY,&
-          & PT(:,:,IBL), PQ(:,:,IBL), &
-          & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, TENDENCY_TMP(IBL)%CLD, &
-          & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC_CLD(:,:,:,IBL), &
-          & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
-          & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
-          & PVERVEL(:,:,IBL),  PAP(:,:,IBL),      PAPH(:,:,IBL),&
-          & PLSM(:,IBL),       LDCUM(:,IBL),      KTYPE(:,IBL), &
-          & PLU(:,:,IBL),      PLUDE(:,:,IBL),    PSNDE(:,:,IBL),    PMFU(:,:,IBL),     PMFD(:,:,IBL),&
-          !---prognostic fields
-          & PA(:,:,IBL),       PCLV_rp(:,:,:,IBL),   PSUPSAT(:,:,IBL),&
-          !-- arrays for aerosol-cloud interactions
-          & PLCRIT_AER(:,:,IBL),PICRIT_AER(:,:,IBL),&
-          & PRE_ICE(:,:,IBL),&
-          & PCCN(:,:,IBL),     PNICE(:,:,IBL),&
-          !---diagnostic output
-          & PCOVPTOT(:,:,IBL), PRAINFRAC_TOPRFZ(:,IBL),&
-          !---resulting fluxes
-          & PFSQLF(:,:,IBL),   PFSQIF (:,:,IBL),  PFCQNNG(:,:,IBL),  PFCQLNG(:,:,IBL),&
-          & PFSQRF(:,:,IBL),   PFSQSF (:,:,IBL),  PFCQRNG(:,:,IBL),  PFCQSNG(:,:,IBL),&
-          & PFSQLTUR(:,:,IBL), PFSQITUR (:,:,IBL), &
-          & PFPLSL(:,:,IBL),   PFPLSN(:,:,IBL),   PFHPSL(:,:,IBL),   PFHPSN(:,:,IBL),&
-          & KFLDX, &
-          & YDOMCST, YDOETHF, YDECLDP)
+         CALL CLOUDSC &
+              & (    1,    ICEND,    NPROMA,  NLEV,&
+              & PTSPHY,&
+              & PT(:,:,IBL), PQ(:,:,IBL), &
+              & TENDENCY_TMP(IBL)%T, TENDENCY_TMP(IBL)%Q, TENDENCY_TMP(IBL)%A, real(TENDENCY_TMP(IBL)%CLD, kind=JPRM), &
+              & TENDENCY_LOC(IBL)%T, TENDENCY_LOC(IBL)%Q, TENDENCY_LOC(IBL)%A, TENDENCY_LOC_CLD(:,:,:,IBL), &
+              & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
+              & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
+              & PVERVEL(:,:,IBL),  PAP(:,:,IBL),      PAPH(:,:,IBL),&
+              & PLSM(:,IBL),       LDCUM(:,IBL),      KTYPE(:,IBL), &
+              & PLU(:,:,IBL),      PLUDE(:,:,IBL),    PSNDE(:,:,IBL),    PMFU(:,:,IBL),     PMFD(:,:,IBL),&
+              !---prognostic fields
+              & PA(:,:,IBL),       real(PCLV(:,:,:,IBL), kind=JPRM),   PSUPSAT(:,:,IBL),&
+              !-- arrays for aerosol-cloud interactions
+              & PLCRIT_AER(:,:,IBL),PICRIT_AER(:,:,IBL),&
+              & PRE_ICE(:,:,IBL),&
+              & PCCN(:,:,IBL),     PNICE(:,:,IBL),&
+              !---diagnostic output
+              & PCOVPTOT(:,:,IBL), PRAINFRAC_TOPRFZ(:,IBL),&
+              !---resulting fluxes
+              & PFSQLF(:,:,IBL),   PFSQIF (:,:,IBL),  PFCQNNG(:,:,IBL),  PFCQLNG(:,:,IBL),&
+              & PFSQRF(:,:,IBL),   PFSQSF (:,:,IBL),  PFCQRNG(:,:,IBL),  PFCQSNG(:,:,IBL),&
+              & PFSQLTUR(:,:,IBL), PFSQITUR (:,:,IBL), &
+              & PFPLSL(:,:,IBL),   PFPLSN(:,:,IBL),   PFHPSL(:,:,IBL),   PFHPSN(:,:,IBL),&
+              & KFLDX, &
+              & YDOMCST, YDOETHF, YDECLDP)
 
-      ! call convert_array_from_dw(TENDENCY_LOC_CLD(:,:,:,IBL), TENDENCY_LOC(IBL)%CLD)
-
-      ! Log number of columns processed by this thread
-      CALL TIMER%THREAD_LOG(TID, IGPC=ICEND)
-    ENDDO
+         ! Log number of columns processed by this thread
+         CALL TIMER%THREAD_LOG(TID, IGPC=ICEND)
+      ENDDO
 
       !-- The "nowait" is here to get correct local timings (tloc) per thread
       !   i.e. we should not wait for slowest thread to finish before measuring tloc
@@ -188,11 +188,11 @@ CONTAINS
       CALL TIMER%END()
 
       CALL TIMER%PRINT_PERFORMANCE(NPROMA, NGPBLKS, NGPTOT)
-
+    
     do IBL=1,NGPBLKS
-      call convert_array_from_dw(TENDENCY_LOC_CLD(:,:,:,IBL), TENDENCY_LOC(IBL)%CLD)
+      TENDENCY_LOC(IBL)%CLD = TENDENCY_LOC_CLD(:,:,:,IBL)
     end do
-    deallocate(TENDENCY_LOC_CLD, PCLV_rp)
+    deallocate(TENDENCY_TMP_CLD, TENDENCY_LOC_CLD, PCLV_rp)
 
   END SUBROUTINE CLOUDSC_DRIVER
 

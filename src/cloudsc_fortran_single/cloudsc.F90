@@ -130,7 +130,7 @@ SUBROUTINE CLOUDSC &
 !!
 !===============================================================================
 
-USE PARKIND1 , ONLY : JPIM, JPRB
+USE PARKIND1 , ONLY : JPIM, JPRB, JPRM
 !USE YOMHOOK  , ONLY : LHOOK, DR_HOOK
 USE YOMPHYDER ,ONLY : STATE_TYPE
 USE YOECLDP  , ONLY : NCLDQV, NCLDQL, NCLDQR, NCLDQI, NCLDQS, NCLV
@@ -138,7 +138,6 @@ USE YOECLDP  , ONLY : TECLDP
 USE YOEPHLI  , ONLY : TEPHLI
 USE YOMCST   , ONLY : TOMCST
 USE YOETHF   , ONLY : TOETHF
-use double_word_hp_library
 IMPLICIT NONE
 
 !-------------------------------------------------------------------------------
@@ -168,11 +167,11 @@ REAL(KIND=JPRB)   ,INTENT(IN)    :: PQ(KLON,KLEV)    ! Q at start of callpar
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PTENDENCY_TMP_T(KLON,KLEV)   ! T cumulative tendency
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PTENDENCY_TMP_Q(KLON,KLEV)   ! Q cumulative tendency
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PTENDENCY_TMP_A(KLON,KLEV)   ! A cumulative tendency
-REAL(KIND=JPRB)   ,INTENT(IN)    :: PTENDENCY_TMP_CLD(KLON,KLEV,NCLV) ! CLD cumulative tendency
+REAL(KIND=JPRM)   ,INTENT(IN)    :: PTENDENCY_TMP_CLD(KLON,KLEV,NCLV) ! CLD cumulative tendency
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_T(KLON,KLEV)   ! T local output tendency
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_Q(KLON,KLEV)   ! Q local output tendency
 REAL(KIND=JPRB)   ,INTENT(INOUT)   :: PTENDENCY_LOC_A(KLON,KLEV)   ! A local output tendency
-type(double_word) ,INTENT(INOUT)   :: PTENDENCY_LOC_CLD(KLON,KLEV,NCLV) ! CLD local output tendency
+REAL(KIND=JPRM)   ,INTENT(INOUT)   :: PTENDENCY_LOC_CLD(KLON,KLEV,NCLV) ! CLD local output tendency
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFA(KLON,KLEV)  ! CC from VDF scheme
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFL(KLON,KLEV)  ! Liq from VDF scheme
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PVFI(KLON,KLEV)  ! Ice from VDF scheme
@@ -196,7 +195,7 @@ REAL(KIND=JPRB)   ,INTENT(IN)    :: PA(KLON,KLEV)    ! Original Cloud fraction (
 
 INTEGER(KIND=JPIM),INTENT(IN)    :: KFLDX 
 
-type(double_word) ,INTENT(IN)    :: PCLV(KLON,KLEV,NCLV) 
+REAL(KIND=JPRM)   ,INTENT(IN)    :: PCLV(KLON,KLEV,NCLV) 
 
  ! Supersat clipped at previous time level in SLTEND
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PSUPSAT(KLON,KLEV)
@@ -637,7 +636,7 @@ ENDDO
 DO JM=1,NCLV-1
   DO JK=1,KLEV
     DO JL=KIDIA,KFDIA
-      PTENDENCY_LOC_CLD(JL,JK,JM)=double_word()
+      PTENDENCY_LOC_CLD(JL,JK,JM)=0.0_JPRB
     ENDDO
   ENDDO
 ENDDO
@@ -683,8 +682,8 @@ ENDDO
 DO JM=1,NCLV-1
   DO JK=1,KLEV
     DO JL=KIDIA,KFDIA
-      ZQX(JL,JK,JM)  = from_dw(PCLV(JL,JK,JM)) + PTSPHY*PTENDENCY_TMP_CLD(JL,JK,JM)
-      ZQX0(JL,JK,JM) = from_dw(PCLV(JL,JK,JM)) + PTSPHY*PTENDENCY_TMP_CLD(JL,JK,JM)
+      ZQX(JL,JK,JM)  = PCLV(JL,JK,JM)+PTSPHY*PTENDENCY_TMP_CLD(JL,JK,JM)
+      ZQX0(JL,JK,JM) = PCLV(JL,JK,JM)+PTSPHY*PTENDENCY_TMP_CLD(JL,JK,JM)
     ENDDO
   ENDDO
 ENDDO
@@ -2756,7 +2755,7 @@ ENDIF ! on IEVAPSNOW
       !       include the tendency already in PTENDENCY_LOC_T and PTENDENCY_LOC_Q. ZQX was reset
       !----------------------------------------------------------------------
     DO JL=KIDIA,KFDIA
-      PTENDENCY_LOC_CLD(JL,JK,JM) = PTENDENCY_LOC_CLD(JL,JK,JM) + to_dw((ZQXN(JL,JM)-ZQX0(JL,JK,JM))*ZQTMST)
+      PTENDENCY_LOC_CLD(JL,JK,JM)=PTENDENCY_LOC_CLD(JL,JK,JM)+(ZQXN(JL,JM)-ZQX0(JL,JK,JM))*ZQTMST
     ENDDO
 
   ENDDO
