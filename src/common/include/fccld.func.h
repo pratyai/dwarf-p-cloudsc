@@ -23,5 +23,5 @@
 !     **********************************************
 !
 !               INPUT : PTARE = TEMPERATURE 
-REAL(KIND=JPRB) :: FOKOOP 
+REAL(KIND=JPRL) :: FOKOOP
 FOKOOP (PTARE) = MIN(RKOOP1-RKOOP2*PTARE,FOEELIQ(PTARE)/FOEEICE(PTARE))

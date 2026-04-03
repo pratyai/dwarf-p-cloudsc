@@ -36,6 +36,7 @@ echo "Scanning ${BUILD}/ for CLOUDSC output files..."
 declare -A FILES  # key="fp64_10" value="/path/to/file.h5"
 FP64_STEPS=()
 FP32_STEPS=()
+FP16_STEPS=()
 
 for f in ${BUILD}/cloudsc_output_*.h5; do
   [ -f "$f" ] || continue
@@ -48,6 +49,8 @@ for f in ${BUILD}/cloudsc_output_*.h5; do
       FP64_STEPS+=("$nsteps")
     elif [ "$prec" = "fp32" ]; then
       FP32_STEPS+=("$nsteps")
+    elif [ "$prec" = "fp16" ]; then
+      FP16_STEPS+=("$nsteps")
     fi
   else
     echo "WARNING: Unexpected filename format: $base (skipping)" >&2
@@ -187,6 +190,15 @@ for nsteps in "${FP32_STEPS[@]}"; do
   run_compare "precision_fp64vs32_${nsteps}steps" \
     "${BASELINE}" "${key}"
 done
+
+# Compare FP64 baseline against all FP16 runs (precision)
+if [ ${#FP16_STEPS[@]} -gt 0 ]; then
+  for nsteps in "${FP16_STEPS[@]}"; do
+    key="fp16_${nsteps}"
+    run_compare "precision_fp64vs16_${nsteps}steps" \
+      "${BASELINE}" "${key}"
+  done
+fi
 
 # --- Report ---
 echo ""

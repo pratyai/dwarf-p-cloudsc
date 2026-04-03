@@ -37,14 +37,19 @@ INTEGER, PARAMETER :: JPIA = JPIM
 INTEGER, PARAMETER :: JPRT = SELECTED_REAL_KIND(2,1)
 INTEGER, PARAMETER :: JPRS = SELECTED_REAL_KIND(4,2)
 INTEGER, PARAMETER :: JPRM = SELECTED_REAL_KIND(6,37)
-#ifdef SINGLE
+#ifdef HALF
+INTEGER, PARAMETER :: JPRB = 2  ! IEEE FP16 half precision (NVHPC real(2))
+INTEGER, PARAMETER :: JPRL = SELECTED_REAL_KIND(6,37)  ! SC2026: "large" kind — FP32 for values that overflow FP16 (>65504)
+#elif defined(SINGLE)
 INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(6,37)
+INTEGER, PARAMETER :: JPRL = JPRB
 #else
 INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13,300)
+INTEGER, PARAMETER :: JPRL = JPRB
 #endif
 
-! Double real for C code and special places requiring 
-!    higher precision. 
+! Double real for C code and special places requiring
+!    higher precision.
 INTEGER, PARAMETER :: JPRD = SELECTED_REAL_KIND(13,300)
 
 

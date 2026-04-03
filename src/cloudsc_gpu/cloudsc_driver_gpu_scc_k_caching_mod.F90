@@ -9,7 +9,7 @@
 
 MODULE CLOUDSC_DRIVER_GPU_SCC_K_CACHING_MOD
 
-  USE PARKIND1, ONLY: JPIM, JPRB
+  USE PARKIND1, ONLY: JPIM, JPRB, JPRL
   USE YOMPHYDER, ONLY: STATE_TYPE
   USE YOECLDP, ONLY : NCLV, YRECLDP, TECLDP
   USE CLOUDSC_MPI_MOD, ONLY: NUMPROC, IRANK
@@ -60,8 +60,8 @@ CONTAINS
     REAL(KIND=JPRB), INTENT(IN)    :: PHRSW(NPROMA, NLEV, NGPBLKS)    ! Short-wave heating rate
     REAL(KIND=JPRB), INTENT(IN)    :: PHRLW(NPROMA, NLEV, NGPBLKS)    ! Long-wave heating rate
     REAL(KIND=JPRB), INTENT(IN)    :: PVERVEL(NPROMA, NLEV, NGPBLKS)  !Vertical velocity
-    REAL(KIND=JPRB), INTENT(IN)    :: PAP(NPROMA, NLEV, NGPBLKS)      ! Pressure on full levels
-    REAL(KIND=JPRB), INTENT(IN)    :: PAPH(NPROMA, NLEV+1, NGPBLKS) ! Pressure on half levels
+    REAL(KIND=JPRL), INTENT(IN)    :: PAP(NPROMA, NLEV, NGPBLKS)      ! Pressure on full levels  ! SC2026: JPRL — value(s) exceed FP16 max
+    REAL(KIND=JPRL), INTENT(IN)    :: PAPH(NPROMA, NLEV+1, NGPBLKS) ! Pressure on half levels  ! SC2026: JPRL — value(s) exceed FP16 max
     REAL(KIND=JPRB), INTENT(IN)    :: PLSM(NPROMA, NGPBLKS)    ! Land fraction (0-1)
     LOGICAL, INTENT(IN)            :: LDCUM(NPROMA, NGPBLKS)    ! Convection active
     INTEGER(KIND=JPIM), INTENT(IN) :: KTYPE(NPROMA, NGPBLKS)    ! Convection type 0,1,2

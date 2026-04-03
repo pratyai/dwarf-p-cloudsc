@@ -8,7 +8,7 @@
 ! nor does it submit to any jurisdiction.
 
 MODULE VALIDATE_MOD
-  USE PARKIND1, ONLY: JPIM, JPRB
+  USE PARKIND1, ONLY: JPIM, JPRB, JPRD
   USE CLOUDSC_MPI_MOD
 
   IMPLICIT NONE
@@ -61,9 +61,9 @@ CONTAINS
     END IF
 
     IF (IRANK == 0) THEN
-      CALL ERROR_PRINT(NAME, REAL(ZMINVAL(1), JPRB), REAL(ZMAX_VAL_ERR(1), JPRB), &
-        & REAL(ZMAX_VAL_ERR(2), JPRB), REAL(ZSUM_ERR_ABS(1), JPRB), &
-        & REAL(ZSUM_ERR_ABS(2), JPRB), REAL(ZAVGPGP, JPRB), NDIM=1)
+      CALL ERROR_PRINT(NAME, REAL(ZMINVAL(1), JPRD), REAL(ZMAX_VAL_ERR(1), JPRD), &
+        & REAL(ZMAX_VAL_ERR(2), JPRD), REAL(ZSUM_ERR_ABS(1), JPRD), &
+        & REAL(ZSUM_ERR_ABS(2), JPRD), REAL(ZAVGPGP, JPRD), NDIM=1)
     END IF
   END SUBROUTINE VALIDATE_L1
 
@@ -109,51 +109,48 @@ CONTAINS
     END IF
 
     IF (IRANK == 0) THEN
-      CALL ERROR_PRINT(NAME, REAL(ZMINVAL(1), JPRB), REAL(ZMAX_VAL_ERR(1), JPRB), &
-        & REAL(ZMAX_VAL_ERR(2), JPRB), REAL(ZSUM_ERR_ABS(1), JPRB), &
-        & REAL(ZSUM_ERR_ABS(2), JPRB), REAL(ZAVGPGP, JPRB), NDIM=1)
+      CALL ERROR_PRINT(NAME, REAL(ZMINVAL(1), JPRD), REAL(ZMAX_VAL_ERR(1), JPRD), &
+        & REAL(ZMAX_VAL_ERR(2), JPRD), REAL(ZSUM_ERR_ABS(1), JPRD), &
+        & REAL(ZSUM_ERR_ABS(2), JPRD), REAL(ZAVGPGP, JPRD), NDIM=1)
     END IF
   END SUBROUTINE VALIDATE_I1
 
   SUBROUTINE VALIDATE_R1(NAME, REF, FIELD, NLON, NGPTOT, NBLOCKS, NGPTOTG)
     ! Computes and prints errors "in the L1 norm sense"
+    ! SC2026: locals use JPRD so validation math works for any JPRB (incl. FP16)
     CHARACTER(*), INTENT(IN) :: NAME
     REAL(KIND=JPRB), INTENT(INOUT) :: REF(:,:), FIELD(:,:)
     INTEGER(KIND=JPIM), INTENT(IN) :: NLON, NBLOCKS, NGPTOT
     INTEGER(KIND=JPIM), INTENT(IN), OPTIONAL :: NGPTOTG
 
     INTEGER :: B, BSIZE, JK
-    REAL(KIND=JPRB) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
+    REAL(KIND=JPRD) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
 
     ZMINVAL(1) = +HUGE(ZMINVAL(1))
     ZMAX_VAL_ERR(1) = -HUGE(ZMAX_VAL_ERR(1))
-    ZMAX_VAL_ERR(2) = 0.0_JPRB
-    ZSUM_ERR_ABS(:) = 0.0_JPRB
+    ZMAX_VAL_ERR(2) = 0.0_JPRD
+    ZSUM_ERR_ABS(:) = 0.0_JPRD
 
-    !OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(B, BSIZE) &
-    !& REDUCTION(MIN:ZMINVAL, MAX:ZMAX_VAL_ERR, +:ZSUM_ERR_ABS)
     DO B=1, NBLOCKS
-      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)  ! Field block size
-      ZMINVAL(1) = MIN(ZMINVAL(1),MINVAL(FIELD(1:BSIZE,B)))
-      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),MAXVAL(FIELD(1:BSIZE,B)))
+      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)
+      ZMINVAL(1) = MIN(ZMINVAL(1),REAL(MINVAL(FIELD(1:BSIZE,B)),JPRD))
+      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),REAL(MAXVAL(FIELD(1:BSIZE,B)),JPRD))
       DO JK=1, bsize
-        ! Difference against reference result in one-norm sense
-        ZDIFF = ABS(FIELD(JK,B) - REF(JK,B))
+        ZDIFF = ABS(REAL(FIELD(JK,B),JPRD) - REAL(REF(JK,B),JPRD))
         ZMAX_VAL_ERR(2) = MAX(ZMAX_VAL_ERR(2),ZDIFF)
         ZSUM_ERR_ABS(1) = ZSUM_ERR_ABS(1) + ZDIFF
-        ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REF(JK,B))
+        ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REAL(REF(JK,B),JPRD))
       END DO
     END DO
 
-    ! These are no-ops if built without MPI
     CALL CLOUDSC_MPI_REDUCE_MIN(ZMINVAL, 1, 0)
     CALL CLOUDSC_MPI_REDUCE_MAX(ZMAX_VAL_ERR, 2, 0)
     CALL CLOUDSC_MPI_REDUCE_SUM(ZSUM_ERR_ABS, 2, 0)
 
     IF (PRESENT(NGPTOTG)) THEN
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRD)
     ELSE
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRD)
     END IF
 
     IF (IRANK == 0) THEN
@@ -163,33 +160,30 @@ CONTAINS
   END SUBROUTINE VALIDATE_R1
 
   SUBROUTINE VALIDATE_R2(NAME, REF, FIELD, NLON, NLEV, NGPTOT, NBLOCKS, NGPTOTG)
-    ! Computes and prints errors "in the L1 norm sense"
+    ! SC2026: locals use JPRD so validation math works for any JPRB (incl. FP16)
     CHARACTER(*), INTENT(IN) :: NAME
     REAL(KIND=JPRB), INTENT(INOUT) :: REF(:,:,:), FIELD(:,:,:)
     INTEGER(KIND=JPIM), INTENT(IN) :: NLON, NLEV, NBLOCKS, NGPTOT
     INTEGER(KIND=JPIM), INTENT(IN), OPTIONAL :: NGPTOTG
 
     INTEGER :: B, BSIZE, JL, JK
-    REAL(KIND=JPRB) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
+    REAL(KIND=JPRD) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
 
     ZMINVAL(1) = +HUGE(ZMINVAL(1))
     ZMAX_VAL_ERR(1) = -HUGE(ZMAX_VAL_ERR(1))
-    ZMAX_VAL_ERR(2) = 0.0_JPRB
-    ZSUM_ERR_ABS(:) = 0.0_JPRB
+    ZMAX_VAL_ERR(2) = 0.0_JPRD
+    ZSUM_ERR_ABS(:) = 0.0_JPRD
 
-    !OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(B, BSIZE) &
-    !& REDUCTION(MIN:ZMINVAL, MAX:ZMAX_VAL_ERR, +:ZSUM_ERR_ABS)
     DO B=1, NBLOCKS
-      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)  ! Field block size
-      ZMINVAL(1) = MIN(ZMINVAL(1),MINVAL(FIELD(1:BSIZE,:,B)))
-      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),MAXVAL(FIELD(1:BSIZE,:,B)))
+      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)
+      ZMINVAL(1) = MIN(ZMINVAL(1),REAL(MINVAL(FIELD(1:BSIZE,:,B)),JPRD))
+      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),REAL(MAXVAL(FIELD(1:BSIZE,:,B)),JPRD))
       DO JL=1, NLEV
         DO JK=1, bsize
-          ! Difference against reference result in one-norm sense
-          ZDIFF = ABS(FIELD(JK,JL,B) - REF(JK,JL,B))
+          ZDIFF = ABS(REAL(FIELD(JK,JL,B),JPRD) - REAL(REF(JK,JL,B),JPRD))
           ZMAX_VAL_ERR(2) = MAX(ZMAX_VAL_ERR(2),ZDIFF)
           ZSUM_ERR_ABS(1) = ZSUM_ERR_ABS(1) + ZDIFF
-          ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REF(JK,JL,B))
+          ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REAL(REF(JK,JL,B),JPRD))
         ENDDO
       END DO
     END DO
@@ -199,9 +193,9 @@ CONTAINS
     CALL CLOUDSC_MPI_REDUCE_SUM(ZSUM_ERR_ABS, 2, 0)
 
     IF (PRESENT(NGPTOTG)) THEN
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRD)
     ELSE
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRD)
     END IF
 
     IF (IRANK == 0) THEN
@@ -211,34 +205,31 @@ CONTAINS
   END SUBROUTINE VALIDATE_R2
 
   SUBROUTINE VALIDATE_R3(NAME, REF, FIELD, NLON, NLEV, NDIM, NGPTOT, NBLOCKS, NGPTOTG)
-    ! Computes and prints errors "in the L1 norm sense"
+    ! SC2026: locals use JPRD so validation math works for any JPRB (incl. FP16)
     CHARACTER(*), INTENT(IN) :: NAME
     REAL(KIND=JPRB), INTENT(INOUT) :: REF(:,:,:,:), FIELD(:,:,:,:)
     INTEGER(KIND=JPIM), INTENT(IN) :: NLON, NLEV, NDIM, NBLOCKS, NGPTOT
     INTEGER(KIND=JPIM), INTENT(IN), OPTIONAL :: NGPTOTG
 
     INTEGER :: B, BSIZE, JL, JK, JM
-    REAL(KIND=JPRB) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
+    REAL(KIND=JPRD) :: ZMINVAL(1), ZMAX_VAL_ERR(2), ZDIFF, ZSUM_ERR_ABS(2), ZRELERR, ZAVGPGP
 
     ZMINVAL(1) = +HUGE(ZMINVAL(1))
     ZMAX_VAL_ERR(1) = -HUGE(ZMAX_VAL_ERR(1))
-    ZMAX_VAL_ERR(2) = 0.0_JPRB
-    ZSUM_ERR_ABS(:) = 0.0_JPRB
+    ZMAX_VAL_ERR(2) = 0.0_JPRD
+    ZSUM_ERR_ABS(:) = 0.0_JPRD
 
-    !OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(B, BSIZE) &
-    !& REDUCTION(MIN:ZMINVAL, MAX:ZMAX_VAL_ERR, +:ZSUM_ERR_ABS)
     DO B=1, NBLOCKS
-      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)  ! Field block size
-      ZMINVAL(1) = MIN(ZMINVAL(1),MINVAL(FIELD(1:BSIZE,:,:,B)))
-      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),MAXVAL(FIELD(1:BSIZE,:,:,B)))
+      BSIZE = MIN(NLON, NGPTOT - (B-1)*NLON)
+      ZMINVAL(1) = MIN(ZMINVAL(1),REAL(MINVAL(FIELD(1:BSIZE,:,:,B)),JPRD))
+      ZMAX_VAL_ERR(1) = MAX(ZMAX_VAL_ERR(1),REAL(MAXVAL(FIELD(1:BSIZE,:,:,B)),JPRD))
       DO JM=1, NDIM
         DO JL=1, NLEV
           DO JK=1, bsize
-            ! Difference against reference result in one-norm sense
-            ZDIFF = ABS(FIELD(JK,JL,JM,B) - REF(JK,JL,JM,B))
+            ZDIFF = ABS(REAL(FIELD(JK,JL,JM,B),JPRD) - REAL(REF(JK,JL,JM,B),JPRD))
             ZMAX_VAL_ERR(2) = MAX(ZMAX_VAL_ERR(2),ZDIFF)
             ZSUM_ERR_ABS(1) = ZSUM_ERR_ABS(1) + ZDIFF
-            ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REF(JK,JL,JM,B))
+            ZSUM_ERR_ABS(2) = ZSUM_ERR_ABS(2) + ABS(REAL(REF(JK,JL,JM,B),JPRD))
           END DO
         END DO
       END DO
@@ -249,9 +240,9 @@ CONTAINS
     CALL CLOUDSC_MPI_REDUCE_SUM(ZSUM_ERR_ABS, 2, 0)
 
     IF (PRESENT(NGPTOTG)) THEN
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOTG,JPRD)
     ELSE
-      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRB)
+      ZAVGPGP = ZSUM_ERR_ABS(1) / REAL(NGPTOT,JPRD)
     END IF
 
     IF (IRANK == 0) THEN
@@ -262,20 +253,21 @@ CONTAINS
 
   SUBROUTINE ERROR_PRINT(NAME, ZMINVAL, ZMAXVAL, ZMAXERR, ZERRSUM, ZSUM, ZAVGPGP, NDIM)
     ! Print error statistic for a single variable (adapted from diff_mod.F90)
+    ! SC2026: all args and locals are JPRD so math works for any JPRB (incl. FP16)
     CHARACTER(*), INTENT(IN) :: NAME
-    REAL(KIND=JPRB), INTENT(IN) :: ZMINVAL, ZMAXVAL, ZMAXERR, ZERRSUM, ZSUM, ZAVGPGP
+    REAL(KIND=JPRD), INTENT(IN) :: ZMINVAL, ZMAXVAL, ZMAXERR, ZERRSUM, ZSUM, ZAVGPGP
     INTEGER(KIND=JPIM), INTENT(IN) :: NDIM
-    REAL(KIND=JPRB) :: zrelerr
-    REAL(KIND=JPRB), parameter :: zeps = epsilon(1.0_JPRB)
+    REAL(KIND=JPRD) :: zrelerr
+    REAL(KIND=JPRD), parameter :: zeps = epsilon(1.0_JPRD)
     INTEGER :: IOPT
     character(len=5) clwarn
 
     iopt = 0
     if (zerrsum < zeps) then
-      zrelerr = 0.0_JPRB
+      zrelerr = 0.0_JPRD
       iopt = 1
     elseif (zsum < zeps) then
-      zrelerr = zerrsum/(1.0_JPRB + zsum)
+      zrelerr = zerrsum/(1.0_JPRD + zsum)
       iopt = 2
     else
       zrelerr = zerrsum/zsum
@@ -286,8 +278,8 @@ CONTAINS
     !   then it is likely that some uninitialized variables exists or
     !   some other screw-up -- watch out this !!!!
     clwarn = ' '
-    if (zrelerr > 10.0_JPRB * zeps) clwarn = ' !!!!'
-    zrelerr = 100.0_JPRB * zrelerr
+    if (zrelerr > 10.0_JPRD * zeps) clwarn = ' !!!!'
+    zrelerr = 100.0_JPRD * zrelerr
 
     write(*,1000) name,ndim,iopt, &
      & zminval,zmaxval, zmaxerr, zavgpgp, zrelerr, clwarn

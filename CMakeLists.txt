@@ -130,8 +130,15 @@ endif()
 ecbuild_add_option( FEATURE SINGLE_PRECISION
     DESCRIPTION "Build CLOUDSC in single precision" DEFAULT OFF
 )
+# SC2026: Add option for half-precision builds (NVHPC real(2) = IEEE FP16)
+ecbuild_add_option( FEATURE HALF_PRECISION
+    DESCRIPTION "Build CLOUDSC in half precision (FP16)" DEFAULT OFF
+)
 set(prec dp)
-if( HAVE_SINGLE_PRECISION )
+if( HAVE_HALF_PRECISION )
+    list(APPEND CLOUDSC_DEFINITIONS HALF)
+    set(prec hp)
+elseif( HAVE_SINGLE_PRECISION )
     list(APPEND CLOUDSC_DEFINITIONS SINGLE)
     set(prec sp)
 endif()

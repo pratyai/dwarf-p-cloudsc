@@ -5,7 +5,7 @@
 ! NSTEPS substeps.  Prognostic fields (PT, PQ, PA, PCLV) are dumped to
 ! HDF5 after every step for offline comparison.
 !
-! Usage:  dwarf-cloudsc-gpu-scc-k-caching-multistep NUMOMP NGPTOTG NPROMA NSTEPS
+! Usage:  dwarf-cloudsc-gpu-scc-k-caching-multistep NUMOMP NGPTOTG NPROMA NSTEPS [TPHYS]
 !
 ! This file is NOT part of the upstream ECMWF dwarf-P-cloudsc distribution.
 ! It was written for the SC2026 precision study.
@@ -40,6 +40,9 @@ CHARACTER(LEN=8)   :: PRECISION_TAG     ! 'fp16', 'fp32', or 'fp64'
 INTEGER(KIND=8)    :: ICLOCK_START, ICLOCK_STEP, ICLOCK_END, ICLOCK_RATE
 REAL(KIND=JPRD)    :: ZTIME_TOTAL, ZTIME_STEP
 INTEGER, PARAMETER :: IOTIMING = 42     ! Unit for timing CSV
+
+! NaN diagnostics
+INTEGER(KIND=JPIM) :: NNAN_T, NNAN_Q, NNAN_A, NNAN_CLD
 
 TYPE(CLOUDSC_GLOBAL_STATE) :: GLOBAL_STATE
 
@@ -82,6 +85,13 @@ END IF
 
 CALL GLOBAL_STATE%LOAD(NPROMA, NGPTOT, NGPTOTG)
 
+! --- Override PTSPHY if 5th argument given ---
+
+IF (IARGS >= 5) THEN
+  CALL GET_COMMAND_ARGUMENT(5, CLARG, LENARG)
+  READ(CLARG(1:LENARG),*) GLOBAL_STATE%PTSPHY
+END IF
+
 ! --- Compute substep dt ---
 
 ZTSPHY_SUB = GLOBAL_STATE%PTSPHY / REAL(NSTEPS, JPRB)
@@ -94,7 +104,9 @@ IF (IRANK == 0) THEN
   WRITE(0,'(1X,A,I0)')        '  NSTEPS   = ', NSTEPS
   WRITE(0,'(1X,A,ES12.5)')    '  PTSPHY   = ', GLOBAL_STATE%PTSPHY
   WRITE(0,'(1X,A,ES12.5)')    '  dt_sub   = ', ZTSPHY_SUB
-#ifdef SINGLE
+#ifdef HALF
+  WRITE(0,'(1X,A)')           '  Precision: FP16 (HALF)'
+#elif defined(SINGLE)
   WRITE(0,'(1X,A)')           '  Precision: FP32 (SINGLE)'
 #else
   WRITE(0,'(1X,A)')           '  Precision: FP64'

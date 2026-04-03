@@ -74,7 +74,7 @@ SUBROUTINE CUADJTQ &
 !      J.Hague & D.Salmond   22-Nov-2005 Optimisations 
 !----------------------------------------------------------------------
 
-USE PARKIND1  ,ONLY : JPIM     ,JPRB
+USE PARKIND1  ,ONLY : JPIM     ,JPRB, JPRD, JPRL
 !USE YOMHOOK   ,ONLY : LHOOK,   DR_HOOK
 
 USE YOMCST   , ONLY : RETV     ,RLVTT    ,RLSTT    ,RTT

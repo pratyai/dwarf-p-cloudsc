@@ -93,6 +93,13 @@ options :
             ENABLE_DOUBLE_PRECISION=OFF
             FIELD_API_DEFINITIONS=SINGLE
 
+    - half-precision :
+        # SC2026: IEEE FP16 via NVHPC real(2) — experimental
+        help  : Enable half precision build of the dwarf (FP16)
+        cmake : >
+            ENABLE_HALF_PRECISION=ON
+            ENABLE_DOUBLE_PRECISION=OFF
+
     - with-field-api :
         help : Enable Field API variants to be built
         cmake : >
@@ -116,6 +123,13 @@ options :
             ENABLE_CLOUDSC_GPU_OMP_SCC_HOIST=ON
             ENABLE_CLOUDSC_GPU_OMP_SCC_STACK=ON
             ENABLE_CLOUDSC_GPU_OMP_SCC_K_CACHING=ON
+
+    - with-gpu-k-caching-only :
+        # SC2026: build only k-caching variant (avoids NVHPC ICEs on other variants at FP16)
+        help  : Enable only the GPU SCC k-caching kernel
+        cmake : >
+            FIELD_API_ENABLE_ACC=ON
+            ENABLE_CLOUDSC_GPU_SCC_K_CACHING=ON
 
     - with-cuda :
         help  : Enable GPU kernel variants based on CUDA and CUDA-Fortran

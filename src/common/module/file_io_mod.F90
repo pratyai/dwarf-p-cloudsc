@@ -42,6 +42,8 @@ module file_io_mod
 
   interface load_array
     procedure load_array_l1, load_array_i1, load_array_r1, load_array_r2, load_array_r3
+    ! SC2026: JPRD variant (load_array_r2_dprd) is NOT in this generic
+    ! because JPRB = JPRD in FP64 builds, causing ambiguity. Call it by name.
   end interface load_array
 
 contains
@@ -232,5 +234,32 @@ contains
     call abor1('ERROR: Serialbox and HDF5 not found.')
 #endif
   end subroutine load_array_r3
+
+  ! SC2026: JPRD output variant — avoids FP16 truncation for fields with values > 65504
+  subroutine load_array_r2_dprd(name, start, end, size, nlon, nlev, buffer)
+    character(len=*), intent(in) :: name
+    integer(kind=jpim), intent(in) :: start, end, size, nlon, nlev
+    real(kind=jprd), intent(out) :: buffer(size,nlev)
+    integer(kind=jpim) :: istart(2), isize(2)
+    real(kind=jprd), allocatable :: rbuf(:,:)
+
+#ifdef HAVE_SERIALBOX
+    allocate(rbuf(nlon,nlev))
+    call fs_read_field(ppser_serializer_ref, ppser_savepoint, name, rbuf)
+    buffer(:,:) = rbuf(start:end,:)
+    deallocate(rbuf)
+#elif defined(HAVE_HDF5)
+    istart(1) = start
+    istart(2) = 1
+    isize(1) = size
+    isize(2) = nlev
+    allocate(rbuf(size,nlev))
+    call input_file%load(name, rbuf, istart, isize)
+    buffer(:,:) = rbuf(:,:)
+    deallocate(rbuf)
+#else
+    call abor1('ERROR: Serialbox and HDF5 not found.')
+#endif
+  end subroutine load_array_r2_dprd
 
 end module file_io_mod

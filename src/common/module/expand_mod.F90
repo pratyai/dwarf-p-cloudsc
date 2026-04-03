@@ -8,11 +8,11 @@
 ! nor does it submit to any jurisdiction.
 
 module expand_mod
-  use parkind1 , only : jpim, jprb
+  use parkind1 , only : jpim, jprb, jprd
   use yomphyder, only : state_type
 
   use cloudsc_mpi_mod, only : irank, numproc
-  use file_io_mod, only: input_initialize, load_scalar, load_array
+  use file_io_mod, only: input_initialize, load_scalar, load_array, load_array_r2_dprd
 
   implicit none
 
@@ -23,6 +23,8 @@ module expand_mod
   interface load_and_expand
      procedure load_and_expand_l1, load_and_expand_i1
      procedure load_and_expand_r1, load_and_expand_r2, load_and_expand_r3
+     ! SC2026: JPRD variant (load_and_expand_r2_dprd) is NOT in this generic
+     ! because JPRB = JPRD in FP64 builds, causing ambiguity. Call it by name.
   end interface load_and_expand
 
 contains
@@ -332,4 +334,54 @@ contains
     end do
 !$omp end parallel do
   end subroutine expand_r3
+
+  ! SC2026: JPRD variants for fields whose values exceed FP16 max (e.g. PAP, PAPH)
+  ! These avoid the JPRD → JPRB (FP16) truncation that causes Inf overflow.
+
+  subroutine load_and_expand_r2_dprd(name, field, nlon, nlev, nproma, ngptot, nblocks, ngptotg)
+    character(len=*) :: name
+    real(kind=jprd), allocatable, intent(inout) :: field(:,:,:)
+    integer(kind=jpim), intent(in) :: nlon, nlev, nproma, ngptot, nblocks
+    integer(kind=jpim), intent(in), optional :: ngptotg
+    real(kind=jprd), allocatable :: buffer(:,:)
+    integer(kind=jpim) :: start, end, size
+
+    call get_offsets(start, end, size, nlon, 1, nlev, ngptot, ngptotg)
+    if (.not. allocated(field))  allocate(field(nproma, nlev, nblocks))
+    allocate(buffer(size, nlev))
+    call load_array_r2_dprd(name, start, end, size, nlon, nlev, buffer)
+    call expand_r2_dprd(buffer, field, size, nproma, nlev, ngptot, nblocks)
+    deallocate(buffer)
+  end subroutine load_and_expand_r2_dprd
+
+  subroutine expand_r2_dprd(buffer, field, nlon, nproma, nlev, ngptot, nblocks)
+    real(kind=jprd), intent(inout) :: buffer(nlon, nlev)
+    real(kind=jprd), intent(inout) :: field(nproma, nlev, nblocks)
+    integer(kind=jpim), intent(in) :: nlon, nlev, nproma, ngptot, nblocks
+    integer :: b, gidx, bsize, fidx, fend, bidx, bend
+
+!$omp parallel do default(shared) private(b, gidx, bsize, fidx, fend, bidx, bend) schedule(runtime)
+    do b=1, nblocks
+       gidx = (b-1)*nproma + 1
+       bsize = min(nproma, ngptot - gidx + 1)
+
+       bidx = mod(gidx-1,nlon)+1
+       bend = min(nlon,bidx+bsize-1)
+       fidx = 1
+       fend = bend - bidx + 1
+       field(fidx:fend,:,b) = buffer(bidx:bend,:)
+
+       do while (fend < bsize)
+         fidx = fend + 1
+         bidx = 1
+         bend = min(bsize - fidx+1, nlon)
+         fend = fidx + bend - 1
+         field(fidx:fend,:,b) = buffer(bidx:bend,:)
+       end do
+
+       field(bsize+1:nproma,:,b) = 0.0_JPRD
+    end do
+!$omp end parallel do
+  end subroutine expand_r2_dprd
+
 end module expand_mod

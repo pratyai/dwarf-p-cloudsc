@@ -133,7 +133,7 @@ SUBROUTINE CLOUDSC &
 !!
 !===============================================================================
 
-USE PARKIND1 , ONLY : JPIM, JPRB
+USE PARKIND1 , ONLY : JPIM, JPRB, JPRD, JPRL
 !USE YOMHOOK  , ONLY : LHOOK, DR_HOOK
 USE YOMMP0   , ONLY : LSCMEC
 USE YOMCST   , ONLY : RG, RD, RCPD, RETV, RLVTT, RLSTT, RLMLT, RTT, RV  
