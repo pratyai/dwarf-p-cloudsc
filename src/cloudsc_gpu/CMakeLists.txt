@@ -425,3 +425,26 @@ if( HAVE_HDF5 )
   execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
       ${CMAKE_CURRENT_SOURCE_DIR}/../../config-files/reference.h5 ${CMAKE_CURRENT_BINARY_DIR}/../../../reference.h5 )
 endif()
+
+
+# ============================================================================
+#  SC2026 precision study — multistep wrapper (NOT part of upstream ECMWF code)
+#
+#  Builds a standalone binary that calls the unmodified SCC k-caching kernel
+#  in a forward-Euler time loop, with per-step HDF5 output for offline
+#  comparison of FP64 vs FP32 and temporal refinement.
+# ============================================================================
+
+if( HAVE_CLOUDSC_GPU_SCC_K_CACHING )
+    ecbuild_add_executable(
+        TARGET dwarf-cloudsc-gpu-scc-k-caching-multistep
+        SOURCES
+            dwarf_cloudsc_gpu_multistep.F90
+            cloudsc_driver_gpu_scc_k_caching_mod.F90
+            cloudsc_gpu_scc_k_caching_mod.F90
+            cloudsc_output_mod.F90
+        LIBS
+            cloudsc-common-lib
+        DEFINITIONS ${CLOUDSC_DEFINITIONS} CLOUDSC_GPU_SCC_K_CACHING
+    )
+endif()

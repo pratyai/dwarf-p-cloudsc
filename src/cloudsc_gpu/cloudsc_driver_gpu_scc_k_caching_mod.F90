@@ -170,6 +170,7 @@ CONTAINS
       ENDDO
     ENDDO
 !$acc end parallel loop
+!$acc wait
 
     CALL TIMER%THREAD_END(TID)
 
