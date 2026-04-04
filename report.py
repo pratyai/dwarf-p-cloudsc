@@ -172,7 +172,7 @@ def _report_timing_grid(conn: sqlite3.Connection, ngptotg: int):
 
 # ---------- Overview report ----------
 
-def report_overview(conn: sqlite3.Connection):
+def report_overview(conn: sqlite3.Connection, perf_only: bool = False, snr_only: bool = False):
     # Check if comparisons table exists (might only have timing data)
     tables = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
@@ -183,53 +183,65 @@ def report_overview(conn: sqlite3.Connection):
             "SELECT * FROM comparisons ORDER BY id"
         ).fetchall()
 
-    if not comps:
+    if not comps and not perf_only:
         print("Database is empty.")
         return
 
     print()
     print("=" * 100)
     print("  CLOUDSC Comparison Report")
+    if perf_only:
+        print("  (performance only)")
+    elif snr_only:
+        print("  (SNR/accuracy only)")
     print("=" * 100)
 
-    # Comparisons table
-    print()
-    print(f"  {'ID':>3}  {'Label':<45} {'Ref':>12} {'Test':>12} {'Steps':>11}")
-    print(f"  {'':>3}  {'':>45} {'(prec)':>12} {'(prec)':>12} {'(ref/test)':>11}")
-    print("  " + "-" * 88)
+    if not snr_only:
+        # Comparisons table
+        print()
+        print(f"  {'ID':>3}  {'Label':<45} {'Ref':>12} {'Test':>12} {'Steps':>11}")
+        print(f"  {'':>3}  {'':>45} {'(prec)':>12} {'(prec)':>12} {'(ref/test)':>11}")
+        print("  " + "-" * 88)
 
-    for c in comps:
-        ref_tag = c["ref_precision"] or "?"
-        test_tag = c["test_precision"] or "?"
-        ref_n = c["ref_nsteps"] or "?"
-        test_n = c["test_nsteps"] or "?"
-        print(f"  {c['id']:>3}  {(c['label'] or '')::<45} {ref_tag:>12} {test_tag:>12} {ref_n:>5}/{test_n:<5}")
+        for c in comps:
+            ref_tag = c["ref_precision"] or "?"
+            test_tag = c["test_precision"] or "?"
+            ref_n = c["ref_nsteps"] or "?"
+            test_n = c["test_nsteps"] or "?"
+            print(f"  {c['id']:>3}  {(c['label'] or '')::<45} {ref_tag:>12} {test_tag:>12} {ref_n:>5}/{test_n:<5}")
 
-    # Timing summary (if timing table exists)
-    report_timing(conn)
+        # Timing summary (if timing table exists)
+        report_timing(conn)
 
-    # Per-comparison detail
-    for c in comps:
-        report_comparison(conn, c)
+    if not perf_only:
+        # Per-comparison detail
+        for c in comps:
+            report_comparison(conn, c)
 
     # Legend
     print()
     print("  Legend")
     print("  " + "-" * 88)
-    print("  Prognostic variables:")
-    print("    PT   — Temperature                                   [K]")
-    print("    PQ   — Specific humidity                             [kg/kg]")
-    print("    PA   — Pressure departure (from reference profile)   [Pa]")
-    print("    PCLV — Cloud liquid/ice water content (all species)  [kg/kg]")
-    print()
-    print("  Error metrics:")
-    print("    max_abs_err  — Worst-case absolute difference  (L_inf norm of |ref - test|)")
-    print("    mean_abs_err — Average absolute difference     (L_1 norm of |ref - test|)")
-    print("    max_rel_err  — Worst-case relative difference  (max |ref - test| / |ref|, where ref != 0)")
-    print("    mean_rel_err — Average relative difference     (mean |ref - test| / |ref|, where ref != 0)")
-    print("    pwr_SNR      — Power signal-to-noise ratio     10*log10( sum(ref^2) / sum((ref-test)^2) )  [dB]")
-    print("    var_SNR      — Variance signal-to-noise ratio  10*log10( var(ref) / var(ref-test) )        [dB]")
-    print("                   Higher SNR = closer match; inf = identical")
+    if not perf_only:
+        print("  Prognostic variables:")
+        print("    PT   — Temperature                                   [K]")
+        print("    PQ   — Specific humidity                             [kg/kg]")
+        print("    PA   — Pressure departure (from reference profile)   [Pa]")
+        print("    PCLV — Cloud liquid/ice water content (all species)  [kg/kg]")
+        print()
+        print("  Error metrics:")
+        print("    max_abs_err  — Worst-case absolute difference  (L_inf norm of |ref - test|)")
+        print("    mean_abs_err — Average absolute difference     (L_1 norm of |ref - test|)")
+        print("    max_rel_err  — Worst-case relative difference  (max |ref - test| / |ref|, where ref != 0)")
+        print("    mean_rel_err — Average relative difference     (mean |ref - test| / |ref|, where ref != 0)")
+        print("    pwr_SNR      — Power signal-to-noise ratio     10*log10( sum(ref^2) / sum((ref-test)^2) )  [dB]")
+        print("    var_SNR      — Variance signal-to-noise ratio  10*log10( var(ref) / var(ref-test) )        [dB]")
+        print("                   Higher SNR = closer match; inf = identical")
+    if not snr_only:
+        print("  Timing:")
+        print("    kernel  — GPU kernel execution time")
+        print("    update  — CPU-side state update (host/device transfers)")
+        print("    d2h     — Device-to-host transfer for HDF5 output")
 
     print()
     print("=" * 100)
@@ -337,6 +349,10 @@ def main():
                         help="Show only this comparison ID")
     parser.add_argument("--query", "-q", default=None,
                         help="Run arbitrary SQL query and display results")
+    parser.add_argument("--perf-only", action="store_true",
+                        help="Show only timing/performance tables")
+    parser.add_argument("--snr-only", action="store_true",
+                        help="Show only SNR/comparison tables")
 
     args = parser.parse_args()
     conn = connect(args.db)
@@ -346,7 +362,7 @@ def main():
     elif args.comparison:
         report_comparison(conn, args.comparison)
     else:
-        report_overview(conn)
+        report_overview(conn, perf_only=args.perf_only, snr_only=args.snr_only)
 
     conn.close()
 

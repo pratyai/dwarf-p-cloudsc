@@ -128,11 +128,11 @@ IF (IRANK == 0) THEN
 #else
   PRECISION_TAG = 'fp64'
 #endif
-  WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A)') 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col.h5'
+  WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.h5'
   CALL CLOUDSC_OUTPUT_OPEN(TRIM(OUT_FILENAME))
 
   ! Open timing CSV (one row per step + summary)
-  WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A)') 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col.csv'
+  WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.csv'
   OPEN(UNIT=IOTIMING, FILE=TRIM(TIMING_FILENAME), STATUS='REPLACE', ACTION='WRITE')
   WRITE(IOTIMING, '(A)') 'step,wall_ms,kernel_ms,update_ms,d2h_ms'
 

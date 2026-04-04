@@ -17,14 +17,14 @@ export CUDA_VISIBLE_DEVICES=0
 # Produces HDF5 output files in build/ for later comparison.
 #
 # Usage: sbatch run_all.sh [NSTEPS] [NPROMA] [TPHYS]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=120.0
+# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0
 # Runs at 1x, 2x, 4x of base grid (163840 columns)
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 NSTEPS=${1:-10}
 NPROMA=${2:-128}
-TPHYS=${3:-120.0}
+TPHYS=${3:-900.0}
 
 # Grid sizes: 1x, 2x, 4x of the base column count
 # 4x at FP64 ≈ 50 GB, fits in 96 GB GH200 HBM3
@@ -113,6 +113,37 @@ for MULT in "${GRID_MULTIPLIERS[@]}"; do
     run_config "FP16r (${NSTEPS} steps, ${MULT}x)" fp16r ${NSTEPS}
   fi
 done
+
+# --- Spatial refinement runs (KLEV=137 vs KLEV=274) ---
+echo ""
+echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+echo "  Spatial refinement: KLEV=137 vs KLEV=274"
+echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+
+SPATIAL_NGPTOTG=40960
+SPATIAL_TPHYS=120.0
+export NV_ACC_CUDA_STACKSIZE=131072
+
+# Activate venv for vertical_refine.py
+source "${SCRIPT_DIR}/venv/bin/activate"
+
+# Generate refined input if needed
+INPUT_2X="${SCRIPT_DIR}/config-files/input_2xklev.h5"
+if [ ! -f "${INPUT_2X}" ]; then
+  echo ">>> Generating 2xKLEV input..."
+  python "${SCRIPT_DIR}/vertical_refine.py" refine "${SCRIPT_DIR}/config-files/input.h5" "${INPUT_2X}"
+fi
+if [ ! -f input_2xklev.h5 ]; then
+  ln -sf "${INPUT_2X}" input_2xklev.h5
+fi
+
+echo ""
+echo ">>> Running spatial coarse (KLEV=137, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS}
+
+echo ""
+echo ">>> Running spatial fine (KLEV=274, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS}
 
 echo ""
 echo "============================================"

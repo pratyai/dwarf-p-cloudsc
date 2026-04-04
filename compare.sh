@@ -45,13 +45,24 @@ declare -A GRIDS  # unique ngptotg values
 for f in ${BUILD}/cloudsc_output_*.h5; do
   [ -f "$f" ] || continue
   base=$(basename "$f")
-  if [[ "$base" =~ cloudsc_output_(fp[0-9]+)_([0-9]+)steps_([0-9]+)col\.h5 ]]; then
+  if [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col_([0-9]+)lev\.h5 ]]; then
+    # Has explicit lev suffix — only ingest base KLEV (137)
+    if [ "${BASH_REMATCH[4]}" != "137" ]; then
+      echo "  Skipping non-base KLEV: $base" >&2
+      continue
+    fi
     prec="${BASH_REMATCH[1]}"
     nsteps="${BASH_REMATCH[2]}"
     ngpt="${BASH_REMATCH[3]}"
     FILES["${prec}_${nsteps}_${ngpt}"]="$f"
     GRIDS["${ngpt}"]=1
-  elif [[ "$base" =~ cloudsc_output_(fp[0-9]+)_([0-9]+)steps\.h5 ]]; then
+  elif [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col\.h5 ]]; then
+    prec="${BASH_REMATCH[1]}"
+    nsteps="${BASH_REMATCH[2]}"
+    ngpt="${BASH_REMATCH[3]}"
+    FILES["${prec}_${nsteps}_${ngpt}"]="$f"
+    GRIDS["${ngpt}"]=1
+  elif [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps\.h5 ]]; then
     # Legacy format (no col suffix) — assume base grid
     prec="${BASH_REMATCH[1]}"
     nsteps="${BASH_REMATCH[2]}"
@@ -86,11 +97,18 @@ echo "Ingesting timing data..."
 for f in ${BUILD}/cloudsc_timing_*.csv; do
   [ -f "$f" ] || continue
   base=$(basename "$f")
-  if [[ "$base" =~ cloudsc_timing_(fp[0-9]+)_([0-9]+)steps_([0-9]+)col\.csv ]]; then
+  if [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col_([0-9]+)lev\.csv ]]; then
+    if [ "${BASH_REMATCH[4]}" != "137" ]; then
+      continue
+    fi
     prec="${BASH_REMATCH[1]}"
     nsteps="${BASH_REMATCH[2]}"
     ngpt="${BASH_REMATCH[3]}"
-  elif [[ "$base" =~ cloudsc_timing_(fp[0-9]+)_([0-9]+)steps\.csv ]]; then
+  elif [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col\.csv ]]; then
+    prec="${BASH_REMATCH[1]}"
+    nsteps="${BASH_REMATCH[2]}"
+    ngpt="${BASH_REMATCH[3]}"
+  elif [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps\.csv ]]; then
     prec="${BASH_REMATCH[1]}"
     nsteps="${BASH_REMATCH[2]}"
     ngpt="163840"
@@ -200,6 +218,37 @@ for NGPT in "${GRID_SIZES[@]}"; do
         "${BASELINE_KEY}" "${key}" "${NGPT}"
     fi
   done
+done
+
+# --- Spatial refinement: restrict 274-level outputs and compare ---
+for f in ${BUILD}/cloudsc_output_fp64_*_274lev.h5; do
+  [ -f "$f" ] || continue
+  base=$(basename "$f")
+  if [[ "$base" =~ cloudsc_output_fp64_([0-9]+)steps_([0-9]+)col_274lev\.h5 ]]; then
+    sp_nsteps="${BASH_REMATCH[1]}"
+    sp_ngpt="${BASH_REMATCH[2]}"
+    coarse_file="${BUILD}/cloudsc_output_fp64_${sp_nsteps}steps_${sp_ngpt}col_137lev.h5"
+    if [ ! -f "${coarse_file}" ]; then
+      echo "  Skipping spatial (no coarse match): $base" >&2
+      continue
+    fi
+    restricted="${BUILD}/cloudsc_output_fp64_2xklev_restricted_${sp_nsteps}steps_${sp_ngpt}col.h5"
+    label="spatial_refine_klev137vs274_${sp_ngpt}col"
+    tmpdb="${TMPDIR_CMP}/${label}.db"
+
+    echo "  Launching: ${label} (restrict + compare)"
+    (
+      python "${SCRIPT_DIR}/vertical_refine.py" restrict "$f" "${restricted}" --klev-coarse 137
+      python "${COMPARE}" \
+        --label "${label}" \
+        --ref-precision fp64 --ref-nsteps "${sp_nsteps}" \
+        --test-precision fp64 --test-nsteps "${sp_nsteps}" \
+        --db "${tmpdb}" --ngptotg "${sp_ngpt}" --nproma "${NPROMA}" \
+        "${coarse_file}" "${restricted}"
+    ) &
+    PIDS+=($!)
+    LABELS+=("${label}")
+  fi
 done
 
 echo ""

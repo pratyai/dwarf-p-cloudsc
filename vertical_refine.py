@@ -194,31 +194,30 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
         sys.exit(1)
 
     # Peek at first step to get dimensions
+    # HDF5 stores Fortran arrays reversed: PT(NPROMA,KLEV,NBLOCKS) -> (NBLOCKS,KLEV,NPROMA)
     first = src[step_groups[0]]
-    pt_shape = first["PT"].shape  # (NPROMA, NLEV_fine, NBLOCKS)
-    nproma = pt_shape[0]
-    klev_fine = pt_shape[1]
-    nblocks = pt_shape[2]
-
-    # Validate
-    if klev_fine != 2 * klev_coarse:
-        print(f"ERROR: Expected NLEV_fine={2 * klev_coarse} but got {klev_fine}",
-              file=sys.stderr)
-        print(f"  (klev_coarse={klev_coarse}, so 2x = {2 * klev_coarse})",
+    pt_shape = first["PT"].shape
+    # Find the KLEV axis: it's the one with 2*klev_coarse elements
+    klev_fine = 2 * klev_coarse
+    klev_axis = None
+    for i, s in enumerate(pt_shape):
+        if s == klev_fine:
+            klev_axis = i
+            break
+    if klev_axis is None:
+        print(f"ERROR: Cannot find axis with {klev_fine} levels in PT shape {pt_shape}",
               file=sys.stderr)
         sys.exit(1)
 
     print(f"Source: {src_path}")
-    print(f"  NPROMA={nproma}  KLEV_fine={klev_fine}  NBLOCKS={nblocks}")
+    print(f"  PT shape={pt_shape}  KLEV axis={klev_axis}  KLEV_fine={klev_fine}")
     print(f"  Restricting to KLEV_coarse={klev_coarse}  ({len(step_groups)} steps)")
 
-    def avg_restrict_3d(data):
-        """(NPROMA, 2*KLEV, NBLOCKS) -> (NPROMA, KLEV, NBLOCKS)"""
-        return 0.5 * (data[:, 0::2, :] + data[:, 1::2, :])
-
-    def avg_restrict_4d(data):
-        """(NPROMA, 2*KLEV, NCLV, NBLOCKS) -> (NPROMA, KLEV, NCLV, NBLOCKS)"""
-        return 0.5 * (data[:, 0::2, :, :] + data[:, 1::2, :, :])
+    def avg_restrict(data, ax):
+        """Average even/odd slices along axis ax."""
+        even = np.take(data, range(0, data.shape[ax], 2), axis=ax)
+        odd = np.take(data, range(1, data.shape[ax], 2), axis=ax)
+        return 0.5 * (even + odd)
 
     for gname in step_groups:
         grp_src = src[gname]
@@ -228,11 +227,20 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
             if var not in grp_src:
                 continue
             data = grp_src[var][:]
-            grp_dst.create_dataset(var, data=avg_restrict_3d(data))
+            grp_dst.create_dataset(var, data=avg_restrict(data, klev_axis))
 
         if "PCLV" in grp_src:
             data = grp_src["PCLV"][:]
-            grp_dst.create_dataset("PCLV", data=avg_restrict_4d(data))
+            # PCLV has an extra NCLV dimension; find KLEV axis by size
+            pclv_ax = None
+            for i, s in enumerate(data.shape):
+                if s == klev_fine:
+                    pclv_ax = i
+                    break
+            if pclv_ax is None:
+                print(f"ERROR: Cannot find KLEV axis in PCLV shape {data.shape}", file=sys.stderr)
+                sys.exit(1)
+            grp_dst.create_dataset("PCLV", data=avg_restrict(data, pclv_ax))
 
     src.close()
     dst.close()
