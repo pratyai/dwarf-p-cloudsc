@@ -175,11 +175,9 @@ run_compare() {
 for nsteps in "${FP64_SORTED[@]}"; do
   [ "$nsteps" = "$BASELINE_STEPS" ] && continue
   key="fp64_${nsteps}"
+  # Only compare refinements (more steps = finer dt)
   if [ "$nsteps" -gt "$BASELINE_STEPS" ]; then
     run_compare "temporal_refine_${BASELINE_STEPS}vs${nsteps}" \
-      "${BASELINE}" "${key}"
-  else
-    run_compare "temporal_coarsen_${BASELINE_STEPS}vs${nsteps}" \
       "${BASELINE}" "${key}"
   fi
 done

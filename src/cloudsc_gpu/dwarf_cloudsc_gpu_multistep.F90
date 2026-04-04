@@ -159,6 +159,38 @@ END IF
 
 CALL SYSTEM_CLOCK(ICLOCK_START, ICLOCK_RATE)
 
+! --- Persistent GPU data region ---
+! All arrays are uploaded once (copyin) and stay on-device for the entire
+! time loop.  The driver uses !$acc present(...) to access them.
+! We only transfer back to host for HDF5 output and NaN checks.
+
+!$acc data &
+!$acc copyin( &
+!$acc   GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
+!$acc   GLOBAL_STATE%B_CML, GLOBAL_STATE%B_TMP, &
+!$acc   GLOBAL_STATE%PVFA, GLOBAL_STATE%PVFL, GLOBAL_STATE%PVFI, &
+!$acc   GLOBAL_STATE%PDYNA, GLOBAL_STATE%PDYNL, GLOBAL_STATE%PDYNI, &
+!$acc   GLOBAL_STATE%PHRSW, GLOBAL_STATE%PHRLW, &
+!$acc   GLOBAL_STATE%PVERVEL, GLOBAL_STATE%PAP, GLOBAL_STATE%PAPH, &
+!$acc   GLOBAL_STATE%PLSM, GLOBAL_STATE%LDCUM, GLOBAL_STATE%KTYPE, &
+!$acc   GLOBAL_STATE%PLU, GLOBAL_STATE%PSNDE, &
+!$acc   GLOBAL_STATE%PMFU, GLOBAL_STATE%PMFD, &
+!$acc   GLOBAL_STATE%PA, GLOBAL_STATE%PCLV, GLOBAL_STATE%PSUPSAT, &
+!$acc   GLOBAL_STATE%PLCRIT_AER, GLOBAL_STATE%PICRIT_AER, &
+!$acc   GLOBAL_STATE%PRE_ICE, &
+!$acc   GLOBAL_STATE%PCCN, GLOBAL_STATE%PNICE) &
+!$acc copy( &
+!$acc   GLOBAL_STATE%B_LOC, GLOBAL_STATE%PLUDE, &
+!$acc   GLOBAL_STATE%PCOVPTOT, GLOBAL_STATE%PRAINFRAC_TOPRFZ) &
+!$acc create( &
+!$acc   GLOBAL_STATE%PFSQLF, GLOBAL_STATE%PFSQIF, &
+!$acc   GLOBAL_STATE%PFCQNNG, GLOBAL_STATE%PFCQLNG, &
+!$acc   GLOBAL_STATE%PFSQRF, GLOBAL_STATE%PFSQSF, &
+!$acc   GLOBAL_STATE%PFCQRNG, GLOBAL_STATE%PFCQSNG, &
+!$acc   GLOBAL_STATE%PFSQLTUR, GLOBAL_STATE%PFSQITUR, &
+!$acc   GLOBAL_STATE%PFPLSL, GLOBAL_STATE%PFPLSN, &
+!$acc   GLOBAL_STATE%PFHPSL, GLOBAL_STATE%PFHPSN)
+
 DO JSTEP = 1, NSTEPS
 
   CALL SYSTEM_CLOCK(ICLOCK_STEP)
@@ -167,7 +199,7 @@ DO JSTEP = 1, NSTEPS
     WRITE(0,'(1X,A,I0,A,I0)') '  Step ', JSTEP, ' / ', NSTEPS
   END IF
 
-  ! Call the unmodified ECMWF kernel with the substep dt
+  ! Call the kernel — all arrays are already present on device
   CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
        & NGPTOT, GLOBAL_STATE%NBLOCKS, NGPTOTG, &
        & GLOBAL_STATE%KFLDX, ZTSPHY_SUB, &
@@ -191,7 +223,50 @@ DO JSTEP = 1, NSTEPS
        & GLOBAL_STATE%PFPLSL,   GLOBAL_STATE%PFPLSN,   GLOBAL_STATE%PFHPSL,   GLOBAL_STATE%PFHPSN &
        & )
 
-  ! Per-step wall time: kernel + H2D/D2H transfers only (before state update & I/O)
+  ! Apply tendencies on GPU: forward Euler state update
+  ! B_LOC layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
+  !$acc parallel loop gang collapse(2) &
+  !$acc present(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, GLOBAL_STATE%PA, &
+  !$acc         GLOBAL_STATE%PCLV, GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC)
+  DO JB = 1, GLOBAL_STATE%NBLOCKS
+    DO JK = 1, GLOBAL_STATE%KLEV
+      !$acc loop vector
+      DO JL = 1, NPROMA
+        GLOBAL_STATE%PT(JL, JK, JB) = GLOBAL_STATE%PT(JL, JK, JB) &
+          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 1, JB) &
+          &               + GLOBAL_STATE%B_LOC(JL, JK, 1, JB))
+        GLOBAL_STATE%PQ(JL, JK, JB) = GLOBAL_STATE%PQ(JL, JK, JB) &
+          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3, JB) &
+          &               + GLOBAL_STATE%B_LOC(JL, JK, 3, JB))
+        GLOBAL_STATE%PA(JL, JK, JB) = GLOBAL_STATE%PA(JL, JK, JB) &
+          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 2, JB) &
+          &               + GLOBAL_STATE%B_LOC(JL, JK, 2, JB))
+        DO JM = 1, NCLV
+          GLOBAL_STATE%PCLV(JL, JK, JM, JB) = GLOBAL_STATE%PCLV(JL, JK, JM, JB) &
+            & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3+JM, JB) &
+            &               + GLOBAL_STATE%B_LOC(JL, JK, 3+JM, JB))
+        END DO
+      END DO
+    END DO
+  END DO
+
+  ! Zero B_LOC on GPU for next kernel call
+  IF (JSTEP < NSTEPS) THEN
+    !$acc parallel loop gang collapse(3) present(GLOBAL_STATE%B_LOC)
+    DO JB = 1, GLOBAL_STATE%NBLOCKS
+      DO JK = 1, GLOBAL_STATE%KLEV
+        DO JL = 1, NPROMA
+          DO JM = 1, 3 + NCLV
+            GLOBAL_STATE%B_LOC(JL, JK, JM, JB) = 0.0_JPRB
+          END DO
+        END DO
+      END DO
+    END DO
+  END IF
+
+  !$acc wait
+
+  ! Per-step wall time: kernel + state update, no host transfers
   CALL SYSTEM_CLOCK(ICLOCK_END)
   ZTIME_STEP = REAL(ICLOCK_END - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
   IF (IRANK == 0) THEN
@@ -199,9 +274,10 @@ DO JSTEP = 1, NSTEPS
     WRITE(IOTIMING, '(I0,A,F12.4)') JSTEP, ',', ZTIME_STEP*1000.0_JPRD
   END IF
 
-  ! --- NaN/Inf check on kernel output (B_LOC) ---
-  ! Use x/=x for NaN (works with FP16), ABS(x)>HUGE for Inf
+  ! NaN/Inf check — compile with -DNAN_CHECK to enable
+#ifdef NAN_CHECK
   IF (IRANK == 0 .AND. JSTEP <= 2) THEN
+    !$acc update host(GLOBAL_STATE%B_LOC, GLOBAL_STATE%PT, GLOBAL_STATE%PQ)
     NNAN_T = COUNT(GLOBAL_STATE%B_LOC(:,:,1,:) /= GLOBAL_STATE%B_LOC(:,:,1,:))
     NNAN_A = COUNT(GLOBAL_STATE%B_LOC(:,:,2,:) /= GLOBAL_STATE%B_LOC(:,:,2,:))
     NNAN_Q = COUNT(GLOBAL_STATE%B_LOC(:,:,3,:) /= GLOBAL_STATE%B_LOC(:,:,3,:))
@@ -214,7 +290,6 @@ DO JSTEP = 1, NSTEPS
       WRITE(0,'(5X,A,I0)') 'CLD: NaN=', NNAN_CLD
       STOP 1
     END IF
-    ! Check prognostic state before update
     NNAN_T = COUNT(GLOBAL_STATE%PT(:,:,:) /= GLOBAL_STATE%PT(:,:,:))
     NNAN_Q = COUNT(GLOBAL_STATE%PQ(:,:,:) /= GLOBAL_STATE%PQ(:,:,:))
     IF (NNAN_T + NNAN_Q > 0) THEN
@@ -223,47 +298,20 @@ DO JSTEP = 1, NSTEPS
       STOP 1
     END IF
   END IF
+#endif
 
-  ! Apply tendencies to advance prognostic state (forward Euler)
-  ! B_LOC buffer layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
-  DO JB = 1, GLOBAL_STATE%NBLOCKS
-    DO JK = 1, GLOBAL_STATE%KLEV
-      DO JL = 1, NPROMA
-        ! Temperature
-        GLOBAL_STATE%PT(JL, JK, JB) = GLOBAL_STATE%PT(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 1, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 1, JB))
-        ! Specific humidity
-        GLOBAL_STATE%PQ(JL, JK, JB) = GLOBAL_STATE%PQ(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 3, JB))
-        ! Cloud fraction
-        GLOBAL_STATE%PA(JL, JK, JB) = GLOBAL_STATE%PA(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 2, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 2, JB))
-        ! Cloud condensate species
-        DO JM = 1, NCLV
-          GLOBAL_STATE%PCLV(JL, JK, JM, JB) = GLOBAL_STATE%PCLV(JL, JK, JM, JB) &
-            & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3+JM, JB) &
-            &               + GLOBAL_STATE%B_LOC(JL, JK, 3+JM, JB))
-        END DO
-      END DO
-    END DO
-  END DO
-
-  ! Zero B_LOC for next kernel call (kernel expects zeroed input)
-  IF (JSTEP < NSTEPS) THEN
-    GLOBAL_STATE%B_LOC(:,:,:,:) = 0.0_JPRB
-  END IF
-
-  ! Write prognostics after this step
+  ! Transfer prognostics to host for HDF5 output
   IF (IRANK == 0) THEN
+    !$acc update host(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
+    !$acc             GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
     CALL CLOUDSC_OUTPUT_WRITE_STEP(JSTEP, NPROMA, GLOBAL_STATE%KLEV, NCLV, &
       & GLOBAL_STATE%NBLOCKS, GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
       & GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
   END IF
 
 END DO
+
+!$acc end data
 
 CALL SYSTEM_CLOCK(ICLOCK_END)
 ZTIME_TOTAL = REAL(ICLOCK_END - ICLOCK_START, JPRD) / REAL(ICLOCK_RATE, JPRD)

@@ -47,45 +47,59 @@ def fmt_err(val) -> str:
 # ---------- Timing report ----------
 
 def report_timing(conn: sqlite3.Connection):
+    """Print per-step wall times for each precision at the baseline step count."""
     try:
-        rows = conn.execute(
-            "SELECT * FROM timing WHERE step='total' ORDER BY precision, nsteps"
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return  # no timing table
+        # Find the baseline nsteps: the step count shared by the most precisions
+        base = conn.execute(
+            "SELECT nsteps, COUNT(DISTINCT precision) AS np FROM timing "
+            "WHERE step='total' GROUP BY nsteps ORDER BY np DESC, nsteps ASC LIMIT 1"
+        ).fetchone()
+        if not base or base["nsteps"] is None:
+            return
+        nsteps = base["nsteps"]
 
-    if not rows:
+        # Get all precisions that have this step count
+        precs = [r["precision"] for r in conn.execute(
+            "SELECT DISTINCT precision FROM timing WHERE nsteps=? AND step != 'total' "
+            "ORDER BY precision", (nsteps,)
+        ).fetchall()]
+    except sqlite3.OperationalError:
         return
 
-    print()
-    print("  Timing")
-    print("  " + "-" * 72)
-    print(f"  {'precision':>9} {'nsteps':>7} {'ngptotg':>9} {'nproma':>7} "
-          f"{'total_ms':>10} {'mean_step_ms':>13} {'throughput':>14}")
-    print("  " + "-" * 72)
+    if not precs:
+        return
 
-    for r in rows:
-        total_ms = r["wall_ms"]
-        nsteps = r["nsteps"]
-        mean_ms = total_ms / nsteps
-        throughput = r["ngptotg"] * nsteps / (total_ms / 1000.0)
-        print(f"  {r['precision']:>9} {nsteps:>7} {r['ngptotg']:>9} {r['nproma']:>7} "
-              f"{total_ms:>10.1f} {mean_ms:>13.1f} {throughput:>12.0f}/s")
-
-    # Also show per-step detail for each config
-    for r in rows:
-        steps = conn.execute(
+    # Build {precision: {step: wall_ms}}
+    data = {}
+    for p in precs:
+        rows = conn.execute(
             "SELECT step, wall_ms FROM timing WHERE precision=? AND nsteps=? "
-            "AND step != 'total' ORDER BY CAST(step AS INTEGER)",
-            (r["precision"], r["nsteps"]),
+            "AND step != 'total' ORDER BY CAST(step AS INTEGER)", (p, nsteps)
         ).fetchall()
-        if not steps:
-            continue
-        times = [s["wall_ms"] for s in steps]
-        print(f"\n  {r['precision']} {r['nsteps']}steps: "
-              f"min={min(times):.1f}ms  max={max(times):.1f}ms  "
-              f"median={sorted(times)[len(times)//2]:.1f}ms  "
-              f"std={((sum((t - sum(times)/len(times))**2 for t in times) / len(times)) ** 0.5):.1f}ms")
+        data[p] = {int(r["step"]): r["wall_ms"] for r in rows}
+
+    steps = sorted(data[precs[0]].keys())
+
+    # Header
+    meta = conn.execute(
+        "SELECT ngptotg, nproma FROM timing WHERE nsteps=? AND step='total' LIMIT 1",
+        (nsteps,)
+    ).fetchone()
+    print()
+    print(f"  Timing — wall time per step [ms]  "
+          f"({nsteps} steps, {meta['ngptotg']} columns, nproma={meta['nproma']})")
+    hdr = f"  {'step':>5}"
+    for p in precs:
+        hdr += f"  {p:>10}"
+    print("  " + "-" * (6 + 12 * len(precs)))
+    print(hdr)
+    print("  " + "-" * (6 + 12 * len(precs)))
+
+    for s in steps:
+        row = f"  {s:>5}"
+        for p in precs:
+            row += f"  {data[p].get(s, 0.0):>10.1f}"
+        print(row)
 
 
 # ---------- Overview report ----------

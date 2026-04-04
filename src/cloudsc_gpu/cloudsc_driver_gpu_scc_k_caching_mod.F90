@@ -119,17 +119,15 @@ CONTAINS
     LOCAL_YRECLDP = YRECLDP
 
 !$acc data &
-!$acc copyin( &
-!$acc   pt,pq,buffer_cml,buffer_tmp,pvfa, &
+!$acc copyin(local_yrecldp) &
+!$acc present( &
+!$acc   pt,pq,buffer_cml,buffer_tmp,buffer_loc,pvfa, &
 !$acc   pvfl,pvfi,pdyna,pdynl,pdyni,phrsw,phrlw,pvervel, &
-!$acc   pap,paph,plsm,ldcum,ktype,plu,psnde, &
+!$acc   pap,paph,plsm,ldcum,ktype,plu,plude,psnde, &
 !$acc   pmfu,pmfd,pa,pclv,psupsat,plcrit_aer,picrit_aer, &
-!$acc   pre_ice,pccn,pnice, yrecldp) &
-!$acc copy( &
-!$acc   buffer_loc,plude,pcovptot,prainfrac_toprfz) &
-!$acc copyout( &
+!$acc   pre_ice,pccn,pnice,pcovptot,prainfrac_toprfz, &
 !$acc   pfsqlf,pfsqif,pfcqnng, &
-!$acc   pfcqlng ,pfsqrf,pfsqsf,pfcqrng,pfcqsng,pfsqltur, &
+!$acc   pfcqlng,pfsqrf,pfsqsf,pfcqrng,pfcqsng,pfsqltur, &
 !$acc   pfsqitur,pfplsl,pfplsn,pfhpsl,pfhpsn)
 
     ! Local timer for each thread
