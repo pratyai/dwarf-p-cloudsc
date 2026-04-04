@@ -173,9 +173,15 @@ def _report_timing_grid(conn: sqlite3.Connection, ngptotg: int):
 # ---------- Overview report ----------
 
 def report_overview(conn: sqlite3.Connection):
-    comps = conn.execute(
-        "SELECT * FROM comparisons ORDER BY id"
-    ).fetchall()
+    # Check if comparisons table exists (might only have timing data)
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if "comparisons" not in tables:
+        comps = []
+    else:
+        comps = conn.execute(
+            "SELECT * FROM comparisons ORDER BY id"
+        ).fetchall()
 
     if not comps:
         print("Database is empty.")

@@ -222,6 +222,42 @@ import sqlite3, glob, sys
 
 main = sqlite3.connect('${DB}')
 
+# Ensure schema exists (main DB may only have timing table)
+main.executescript('''
+CREATE TABLE IF NOT EXISTS comparisons (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp     TEXT    NOT NULL,
+    label         TEXT,
+    ref_file      TEXT    NOT NULL,
+    test_file     TEXT    NOT NULL,
+    ref_precision TEXT,
+    test_precision TEXT,
+    ref_nsteps    INTEGER,
+    test_nsteps   INTEGER,
+    ngptotg       INTEGER,
+    nproma        INTEGER,
+    notes         TEXT
+);
+CREATE TABLE IF NOT EXISTS step_stats (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    comparison_id   INTEGER NOT NULL REFERENCES comparisons(id),
+    step            INTEGER NOT NULL,
+    variable        TEXT    NOT NULL,
+    max_abs_err     REAL,
+    mean_abs_err    REAL,
+    max_rel_err     REAL,
+    mean_rel_err    REAL,
+    power_snr_db    REAL,
+    var_snr_db      REAL,
+    ref_min         REAL,
+    ref_max         REAL,
+    ref_mean        REAL,
+    test_min        REAL,
+    test_max        REAL,
+    test_mean       REAL
+);
+''')
+
 for tmpdb_path in sorted(glob.glob('${TMPDIR_CMP}/*.db')):
     tmp = sqlite3.connect(tmpdb_path)
     tmp.row_factory = sqlite3.Row

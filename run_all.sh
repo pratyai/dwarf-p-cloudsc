@@ -5,10 +5,13 @@
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --exclusive
 #SBATCH --time=00:30:00
 #SBATCH --output=run_all_%j.log
 
 set -euo pipefail
+
+export CUDA_VISIBLE_DEVICES=0
 
 # Run CLOUDSC GPU SCC k-caching at multiple precisions and timestep counts.
 # Produces HDF5 output files in build/ for later comparison.
