@@ -262,4 +262,33 @@ contains
 #endif
   end subroutine load_array_r2_dprd
 
+  ! SC2026: JPRD output variant for 3D fields (NCLV, KLEV, KLON)
+  subroutine load_array_r3_dprd(name, start, end, size, nlon, nlev, ndim, buffer)
+    character(len=*), intent(in) :: name
+    integer(kind=jpim), intent(in) :: start, end, size, nlon, nlev, ndim
+    real(kind=jprd), intent(out) :: buffer(size,nlev,ndim)
+    integer(kind=jpim) :: istart(3), isize(3)
+    real(kind=jprd), allocatable :: rbuf(:,:,:)
+
+#ifdef HAVE_SERIALBOX
+    allocate(rbuf(nlon,nlev,ndim))
+    call fs_read_field(ppser_serializer_ref, ppser_savepoint, name, rbuf)
+    buffer(:,:,:) = rbuf(start:end,:,:)
+    deallocate(rbuf)
+#elif defined(HAVE_HDF5)
+    istart(1) = start
+    istart(2) = 1
+    istart(3) = 1
+    isize(1) = size
+    isize(2) = nlev
+    isize(3) = ndim
+    allocate(rbuf(size,nlev,ndim))
+    call input_file%load(name, rbuf, istart, isize)
+    buffer(:,:,:) = rbuf(:,:,:)
+    deallocate(rbuf)
+#else
+    call abor1('ERROR: Serialbox and HDF5 not found.')
+#endif
+  end subroutine load_array_r3_dprd
+
 end module file_io_mod

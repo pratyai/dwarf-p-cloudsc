@@ -209,7 +209,7 @@ CONTAINS
     REAL(KIND=JPRB), INTENT(IN) :: PA(KLON, KLEV)
     ! Original Cloud fraction (t)
     
-    REAL(KIND=JPRB), INTENT(IN) :: PCLV(KLON, KLEV, NCLV)
+    REAL(KIND=JPRL), INTENT(IN) :: PCLV(KLON, KLEV, NCLV)  ! SC2026: JPRL — values underflow FP16
     
     ! Supersat clipped at previous time level in SLTEND
     REAL(KIND=JPRB), INTENT(IN) :: PSUPSAT(KLON, KLEV)

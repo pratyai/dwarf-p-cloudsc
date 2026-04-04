@@ -12,7 +12,8 @@ module expand_mod
   use yomphyder, only : state_type
 
   use cloudsc_mpi_mod, only : irank, numproc
-  use file_io_mod, only: input_initialize, load_scalar, load_array, load_array_r2_dprd
+  use file_io_mod, only: input_initialize, load_scalar, load_array, &
+    & load_array_r2_dprd, load_array_r3_dprd
 
   implicit none
 
@@ -383,5 +384,52 @@ contains
     end do
 !$omp end parallel do
   end subroutine expand_r2_dprd
+
+  ! SC2026: JPRD load+expand for 3D fields (e.g. PCLV — values underflow FP16)
+  subroutine load_and_expand_r3_dprd(name, field, nlon, nlev, ndim, nproma, ngptot, nblocks, ngptotg)
+    character(len=*) :: name
+    real(kind=jprd), allocatable, intent(inout) :: field(:,:,:,:)
+    integer(kind=jpim), intent(in) :: nlon, nlev, ndim, nproma, ngptot, nblocks
+    integer(kind=jpim), intent(in), optional :: ngptotg
+    real(kind=jprd), allocatable :: buffer(:,:,:)
+    integer(kind=jpim) :: start, end, size
+
+    call get_offsets(start, end, size, nlon, 1, nlev, ngptot, ngptotg)
+    if (.not. allocated(field))  allocate(field(nproma, nlev, ndim, nblocks))
+    allocate(buffer(size, nlev, ndim))
+    call load_array_r3_dprd(name, start, end, size, nlon, nlev, ndim, buffer)
+    call expand_r3_dprd(buffer, field, size, nproma, nlev, ndim, ngptot, nblocks)
+    deallocate(buffer)
+  end subroutine load_and_expand_r3_dprd
+
+  subroutine expand_r3_dprd(buffer, field, nlon, nproma, nlev, ndim, ngptot, nblocks)
+    real(kind=jprd), intent(inout) :: buffer(nlon, nlev, ndim)
+    real(kind=jprd), intent(inout) :: field(nproma, nlev, ndim, nblocks)
+    integer(kind=jpim), intent(in) :: nlon, nlev, ndim, nproma, ngptot, nblocks
+    integer :: b, gidx, bsize, fidx, fend, bidx, bend
+
+!$omp parallel do default(shared) private(b, gidx, bsize, fidx, fend, bidx, bend) schedule(runtime)
+    do b=1, nblocks
+       gidx = (b-1)*nproma + 1
+       bsize = min(nproma, ngptot - gidx + 1)
+
+       bidx = mod(gidx-1,nlon)+1
+       bend = min(nlon,bidx+bsize-1)
+       fidx = 1
+       fend = bend - bidx + 1
+       field(fidx:fend,:,:,b) = buffer(bidx:bend,:,:)
+
+       do while (fend < bsize)
+         fidx = fend + 1
+         bidx = 1
+         bend = min(bsize - fidx+1, nlon)
+         fend = fidx + bend - 1
+         field(fidx:fend,:,:,b) = buffer(bidx:bend,:,:)
+       end do
+
+       field(bsize+1:nproma,:,:,b) = 0.0_JPRD
+    end do
+!$omp end parallel do
+  end subroutine expand_r3_dprd
 
 end module expand_mod
