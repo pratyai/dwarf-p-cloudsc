@@ -94,10 +94,18 @@ options :
             FIELD_API_DEFINITIONS=SINGLE
 
     - half-precision :
-        # SC2026: IEEE FP16 via NVHPC real(2) — experimental
+        # SC2026: IEEE FP16 via NVHPC real(2) — aggressive (everything FP16)
         help  : Enable half precision build of the dwarf (FP16)
         cmake : >
             ENABLE_HALF_PRECISION=ON
+            ENABLE_DOUBLE_PRECISION=OFF
+
+    - half-restricted :
+        # SC2026: FP16 with overflow-prone values promoted to FP32
+        help  : Enable restricted half precision (FP16 + FP32 safety net)
+        cmake : >
+            ENABLE_HALF_PRECISION=ON
+            ENABLE_HALF_RESTRICTED=ON
             ENABLE_DOUBLE_PRECISION=OFF
 
     - with-field-api :

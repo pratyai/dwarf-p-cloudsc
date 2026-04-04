@@ -135,8 +135,15 @@ ecbuild_add_option( FEATURE HALF_PRECISION
     DESCRIPTION "Build CLOUDSC in half precision (FP16)" DEFAULT OFF
 )
 set(prec dp)
+ecbuild_add_option( FEATURE HALF_RESTRICTED
+    DESCRIPTION "FP16 with overflow-prone values promoted to FP32" DEFAULT OFF
+    CONDITION HAVE_HALF_PRECISION
+)
 if( HAVE_HALF_PRECISION )
     list(APPEND CLOUDSC_DEFINITIONS HALF)
+    if( HAVE_HALF_RESTRICTED )
+        list(APPEND CLOUDSC_DEFINITIONS HALF_RESTRICTED)
+    endif()
     set(prec hp)
 elseif( HAVE_SINGLE_PRECISION )
     list(APPEND CLOUDSC_DEFINITIONS SINGLE)

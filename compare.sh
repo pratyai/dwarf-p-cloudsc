@@ -193,7 +193,7 @@ for NGPT in "${GRID_SIZES[@]}"; do
   done
 
   # Precision
-  for prec in fp32 fp16; do
+  for prec in fp32 fp16 fp16r; do
     key="${prec}_${BASELINE_STEPS}_${NGPT}"
     if [ -n "${FILES[$key]+x}" ]; then
       run_compare "precision_fp64vs${prec#fp}_${BASELINE_STEPS}steps_${NGPT}col" \

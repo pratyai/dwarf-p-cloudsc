@@ -74,10 +74,11 @@ build_precision() {
   fi
 }
 
-# --- Build all three precisions (FP16 first — most fragile, fail fast) ---
-build_precision "FP16 (half precision)"    fp16  "--half-precision"
-build_precision "FP32 (single precision)"  fp32  "--single-precision"
-build_precision "FP64 (double precision)"  fp64  ""
+# --- Build all precisions (FP16 first — most fragile, fail fast) ---
+build_precision "FP16 (aggressive half)"      fp16   "--half-precision"
+build_precision "FP16r (restricted half)"     fp16r  "--half-restricted"
+build_precision "FP32 (single precision)"     fp32   "--single-precision"
+build_precision "FP64 (double precision)"     fp64   ""
 
 # --- Restore all binaries into build/bin/ ---
 echo ""
@@ -85,7 +86,7 @@ echo "============================================"
 echo "  Restoring binaries to build/bin/"
 echo "============================================"
 mkdir -p build/bin
-for ext in fp64 fp32 fp16; do
+for ext in fp64 fp32 fp16 fp16r; do
   if [ -f ${STASH_DIR}/${ext} ]; then
     cp ${STASH_DIR}/${ext} build/${BINARY}.${ext}
     echo "  OK: build/${BINARY}.${ext}"
@@ -106,14 +107,14 @@ done
 echo ""
 echo "============================================"
 echo "  Done. Binaries:"
-for ext in fp64 fp32 fp16; do
+for ext in fp64 fp32 fp16 fp16r; do
   if [ -f build/${BINARY}.${ext} ]; then
     echo "    build/${BINARY}.${ext}"
   fi
 done
 echo ""
 echo "  SASS dumps:"
-for ext in fp64 fp32 fp16; do
+for ext in fp64 fp32 fp16 fp16r; do
   if [ -f ${PTX_DIR}/${ext}/cloudsc.sass ]; then
     sz=$(wc -c < ${PTX_DIR}/${ext}/cloudsc.sass | tr -d ' ')
     echo "    ${PTX_DIR}/${ext}/cloudsc.sass  (${sz} bytes)"

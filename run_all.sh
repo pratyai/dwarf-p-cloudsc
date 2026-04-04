@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --exclusive
-#SBATCH --time=00:30:00
+#SBATCH --time=02:00:00
 #SBATCH --output=run_all_%j.log
 
 set -euo pipefail
@@ -59,6 +59,12 @@ if [ -f ${BINARY}.fp16 ]; then
 else
   echo "NOTE: ${BINARY}.fp16 not found — skipping FP16 runs"
 fi
+HAVE_FP16R=0
+if [ -f ${BINARY}.fp16r ]; then
+  HAVE_FP16R=1
+else
+  echo "NOTE: ${BINARY}.fp16r not found — skipping FP16r runs"
+fi
 
 # Check data
 for f in input.h5 reference.h5; do
@@ -102,6 +108,9 @@ for MULT in "${GRID_MULTIPLIERS[@]}"; do
 
   if [ ${HAVE_FP16} -eq 1 ]; then
     run_config "FP16 (${NSTEPS} steps, ${MULT}x)" fp16 ${NSTEPS}
+  fi
+  if [ ${HAVE_FP16R} -eq 1 ]; then
+    run_config "FP16r (${NSTEPS} steps, ${MULT}x)" fp16r ${NSTEPS}
   fi
 done
 
