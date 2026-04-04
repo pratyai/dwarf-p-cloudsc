@@ -47,21 +47,33 @@ def fmt_err(val) -> str:
 # ---------- Timing report ----------
 
 def report_timing(conn: sqlite3.Connection):
-    """Print per-step wall times for each precision at the baseline step count."""
+    """Print per-step wall times for each precision, grouped by grid size."""
     try:
-        # Find the baseline nsteps: the step count shared by the most precisions
+        grid_sizes = [r["ngptotg"] for r in conn.execute(
+            "SELECT DISTINCT ngptotg FROM timing ORDER BY ngptotg"
+        ).fetchall()]
+    except sqlite3.OperationalError:
+        return
+
+    for ngptotg in grid_sizes:
+        _report_timing_grid(conn, ngptotg)
+
+
+def _report_timing_grid(conn: sqlite3.Connection, ngptotg: int):
+    """Print timing for one grid size."""
+    try:
         base = conn.execute(
             "SELECT nsteps, COUNT(DISTINCT precision) AS np FROM timing "
-            "WHERE step='total' GROUP BY nsteps ORDER BY np DESC, nsteps ASC LIMIT 1"
+            "WHERE step='total' AND ngptotg=? GROUP BY nsteps ORDER BY np DESC, nsteps ASC LIMIT 1",
+            (ngptotg,)
         ).fetchone()
         if not base or base["nsteps"] is None:
             return
         nsteps = base["nsteps"]
 
-        # Get all precisions that have this step count
         precs = [r["precision"] for r in conn.execute(
-            "SELECT DISTINCT precision FROM timing WHERE nsteps=? AND step != 'total' "
-            "ORDER BY precision", (nsteps,)
+            "SELECT DISTINCT precision FROM timing WHERE nsteps=? AND ngptotg=? AND step != 'total' "
+            "ORDER BY precision", (nsteps, ngptotg)
         ).fetchall()]
     except sqlite3.OperationalError:
         return
@@ -69,37 +81,93 @@ def report_timing(conn: sqlite3.Connection):
     if not precs:
         return
 
-    # Build {precision: {step: wall_ms}}
+    # Build {precision: {step: {wall, kernel, update, d2h}}}
     data = {}
+    has_breakdown = False
     for p in precs:
         rows = conn.execute(
-            "SELECT step, wall_ms FROM timing WHERE precision=? AND nsteps=? "
-            "AND step != 'total' ORDER BY CAST(step AS INTEGER)", (p, nsteps)
+            "SELECT step, wall_ms, kernel_ms, update_ms, d2h_ms FROM timing "
+            "WHERE precision=? AND nsteps=? AND ngptotg=? AND step NOT IN ('total','h2d') "
+            "ORDER BY CAST(step AS INTEGER)", (p, nsteps, ngptotg)
         ).fetchall()
-        data[p] = {int(r["step"]): r["wall_ms"] for r in rows}
+        data[p] = {}
+        for r in rows:
+            data[p][int(r["step"])] = {
+                "wall": r["wall_ms"],
+                "kernel": r["kernel_ms"],
+                "update": r["update_ms"],
+                "d2h": r["d2h_ms"],
+            }
+            if r["kernel_ms"] is not None:
+                has_breakdown = True
+
+    # H2D transfer times (one-off)
+    h2d = {}
+    for p in precs:
+        r = conn.execute(
+            "SELECT wall_ms FROM timing WHERE precision=? AND nsteps=? AND ngptotg=? AND step='h2d'",
+            (p, nsteps, ngptotg)
+        ).fetchone()
+        h2d[p] = r["wall_ms"] if r else None
 
     steps = sorted(data[precs[0]].keys())
 
-    # Header
     meta = conn.execute(
-        "SELECT ngptotg, nproma FROM timing WHERE nsteps=? AND step='total' LIMIT 1",
-        (nsteps,)
+        "SELECT ngptotg, nproma FROM timing WHERE nsteps=? AND ngptotg=? AND step='total' LIMIT 1",
+        (nsteps, ngptotg)
     ).fetchone()
-    print()
-    print(f"  Timing — wall time per step [ms]  "
-          f"({nsteps} steps, {meta['ngptotg']} columns, nproma={meta['nproma']})")
-    hdr = f"  {'step':>5}"
-    for p in precs:
-        hdr += f"  {p:>10}"
-    print("  " + "-" * (6 + 12 * len(precs)))
-    print(hdr)
-    print("  " + "-" * (6 + 12 * len(precs)))
 
-    for s in steps:
-        row = f"  {s:>5}"
+    # --- H2D table ---
+    if any(v is not None for v in h2d.values()):
+        print()
+        print(f"  H2D transfer [ms]  ({meta['ngptotg']} columns, nproma={meta['nproma']})")
+        hdr = f"  {'':>5}"
         for p in precs:
-            row += f"  {data[p].get(s, 0.0):>10.1f}"
+            hdr += f"  {p:>10}"
+        print("  " + "-" * (6 + 12 * len(precs)))
+        print(hdr)
+        print("  " + "-" * (6 + 12 * len(precs)))
+        row = f"  {'h2d':>5}"
+        for p in precs:
+            v = h2d.get(p)
+            row += f"  {v:>10.1f}" if v is not None else f"  {'—':>10}"
         print(row)
+
+    # --- Per-step table ---
+    if has_breakdown:
+        # Show breakdown per precision
+        for p in precs:
+            print()
+            print(f"  {p} — per step [ms]  "
+                  f"({nsteps} steps, {meta['ngptotg']} columns, nproma={meta['nproma']})")
+            print(f"  {'step':>5}  {'wall':>10}  {'kernel':>10}  {'update':>10}  {'d2h':>10}")
+            print("  " + "-" * 54)
+            for s in steps:
+                d = data[p].get(s, {})
+                w = d.get("wall", 0.0)
+                k = d.get("kernel")
+                u = d.get("update")
+                t = d.get("d2h")
+                print(f"  {s:>5}  {w:>10.1f}  "
+                      f"{k:>10.1f}  {u:>10.1f}  {t:>10.1f}"
+                      if k is not None else
+                      f"  {s:>5}  {w:>10.1f}")
+    else:
+        # Legacy: wall-only table
+        print()
+        print(f"  Timing — wall time per step [ms]  "
+              f"({nsteps} steps, {meta['ngptotg']} columns, nproma={meta['nproma']})")
+        hdr = f"  {'step':>5}"
+        for p in precs:
+            hdr += f"  {p:>10}"
+        print("  " + "-" * (6 + 12 * len(precs)))
+        print(hdr)
+        print("  " + "-" * (6 + 12 * len(precs)))
+        for s in steps:
+            row = f"  {s:>5}"
+            for p in precs:
+                row += f"  {data[p].get(s, {}).get('wall', 0.0):>10.1f}"
+            print(row)
 
 
 # ---------- Overview report ----------

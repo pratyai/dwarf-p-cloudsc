@@ -38,7 +38,9 @@ CHARACTER(LEN=8)   :: PRECISION_TAG     ! 'fp16', 'fp32', or 'fp64'
 
 ! Timing
 INTEGER(KIND=8)    :: ICLOCK_START, ICLOCK_STEP, ICLOCK_END, ICLOCK_RATE
+INTEGER(KIND=8)    :: ICLOCK_H2D, ICLOCK_AUX
 REAL(KIND=JPRD)    :: ZTIME_TOTAL, ZTIME_STEP
+REAL(KIND=JPRD)    :: ZTIME_H2D, ZTIME_KERNEL, ZTIME_UPDATE, ZTIME_D2H
 INTEGER, PARAMETER :: IOTIMING = 42     ! Unit for timing CSV
 
 ! NaN diagnostics
@@ -124,13 +126,13 @@ IF (IRANK == 0) THEN
 #else
   PRECISION_TAG = 'fp64'
 #endif
-  WRITE(OUT_FILENAME, '(A,A,A,I0,A)') 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps.h5'
+  WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A)') 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col.h5'
   CALL CLOUDSC_OUTPUT_OPEN(TRIM(OUT_FILENAME))
 
   ! Open timing CSV (one row per step + summary)
-  WRITE(TIMING_FILENAME, '(A,A,A,I0,A)') 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps.csv'
+  WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A)') 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col.csv'
   OPEN(UNIT=IOTIMING, FILE=TRIM(TIMING_FILENAME), STATUS='REPLACE', ACTION='WRITE')
-  WRITE(IOTIMING, '(A)') 'step,wall_ms'
+  WRITE(IOTIMING, '(A)') 'step,wall_ms,kernel_ms,update_ms,d2h_ms'
 
   ! Write initial state as step 0
   CALL CLOUDSC_OUTPUT_WRITE_STEP(0, NPROMA, GLOBAL_STATE%KLEV, NCLV, &
@@ -164,6 +166,8 @@ CALL SYSTEM_CLOCK(ICLOCK_START, ICLOCK_RATE)
 ! time loop.  The driver uses !$acc present(...) to access them.
 ! We only transfer back to host for HDF5 output and NaN checks.
 
+CALL SYSTEM_CLOCK(ICLOCK_H2D)
+
 !$acc data &
 !$acc copyin( &
 !$acc   GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
@@ -191,13 +195,21 @@ CALL SYSTEM_CLOCK(ICLOCK_START, ICLOCK_RATE)
 !$acc   GLOBAL_STATE%PFPLSL, GLOBAL_STATE%PFPLSN, &
 !$acc   GLOBAL_STATE%PFHPSL, GLOBAL_STATE%PFHPSN)
 
-DO JSTEP = 1, NSTEPS
+!$acc wait
+CALL SYSTEM_CLOCK(ICLOCK_AUX)
+ZTIME_H2D = REAL(ICLOCK_AUX - ICLOCK_H2D, JPRD) / REAL(ICLOCK_RATE, JPRD)
+IF (IRANK == 0) THEN
+  WRITE(0,'(1X,A,F10.3,A)') '  H2D transfer: ', ZTIME_H2D*1000.0_JPRD, ' ms'
+  WRITE(IOTIMING, '(A,A,F12.4,A)') 'h2d', ',', ZTIME_H2D*1000.0_JPRD, ',,,'
+END IF
 
-  CALL SYSTEM_CLOCK(ICLOCK_STEP)
+DO JSTEP = 1, NSTEPS
 
   IF (IRANK == 0) THEN
     WRITE(0,'(1X,A,I0,A,I0)') '  Step ', JSTEP, ' / ', NSTEPS
   END IF
+
+  CALL SYSTEM_CLOCK(ICLOCK_STEP)
 
   ! Call the kernel — all arrays are already present on device
   CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
@@ -222,6 +234,10 @@ DO JSTEP = 1, NSTEPS
        & GLOBAL_STATE%PFSQLTUR, GLOBAL_STATE%PFSQITUR, &
        & GLOBAL_STATE%PFPLSL,   GLOBAL_STATE%PFPLSN,   GLOBAL_STATE%PFHPSL,   GLOBAL_STATE%PFHPSN &
        & )
+
+  !$acc wait
+  CALL SYSTEM_CLOCK(ICLOCK_AUX)
+  ZTIME_KERNEL = REAL(ICLOCK_AUX - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
 
   ! Apply tendencies on GPU: forward Euler state update
   ! B_LOC layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
@@ -265,14 +281,8 @@ DO JSTEP = 1, NSTEPS
   END IF
 
   !$acc wait
-
-  ! Per-step wall time: kernel + state update, no host transfers
   CALL SYSTEM_CLOCK(ICLOCK_END)
-  ZTIME_STEP = REAL(ICLOCK_END - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
-  IF (IRANK == 0) THEN
-    WRITE(0,'(1X,A,I0,A,F10.3,A)') '  Step ', JSTEP, ' wall time: ', ZTIME_STEP*1000.0_JPRD, ' ms'
-    WRITE(IOTIMING, '(I0,A,F12.4)') JSTEP, ',', ZTIME_STEP*1000.0_JPRD
-  END IF
+  ZTIME_UPDATE = REAL(ICLOCK_END - ICLOCK_AUX, JPRD) / REAL(ICLOCK_RATE, JPRD)
 
   ! NaN/Inf check — compile with -DNAN_CHECK to enable
 #ifdef NAN_CHECK
@@ -301,9 +311,28 @@ DO JSTEP = 1, NSTEPS
 #endif
 
   ! Transfer prognostics to host for HDF5 output
+  CALL SYSTEM_CLOCK(ICLOCK_AUX)
   IF (IRANK == 0) THEN
     !$acc update host(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
     !$acc             GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
+  END IF
+  !$acc wait
+  CALL SYSTEM_CLOCK(ICLOCK_END)
+  ZTIME_D2H = REAL(ICLOCK_END - ICLOCK_AUX, JPRD) / REAL(ICLOCK_RATE, JPRD)
+  ZTIME_STEP = ZTIME_KERNEL + ZTIME_UPDATE + ZTIME_D2H
+
+  IF (IRANK == 0) THEN
+    WRITE(0,'(1X,A,I0,A,F10.3,A,A,F8.3,A,F8.3,A,F8.3,A)') &
+      & '  Step ', JSTEP, ' wall: ', ZTIME_STEP*1000.0_JPRD, ' ms', &
+      & '  (kernel=', ZTIME_KERNEL*1000.0_JPRD, &
+      & '  update=', ZTIME_UPDATE*1000.0_JPRD, &
+      & '  d2h=', ZTIME_D2H*1000.0_JPRD, ')'
+    WRITE(IOTIMING, '(I0,4(A,F12.4))') JSTEP, &
+      & ',', ZTIME_STEP*1000.0_JPRD, &
+      & ',', ZTIME_KERNEL*1000.0_JPRD, &
+      & ',', ZTIME_UPDATE*1000.0_JPRD, &
+      & ',', ZTIME_D2H*1000.0_JPRD
+
     CALL CLOUDSC_OUTPUT_WRITE_STEP(JSTEP, NPROMA, GLOBAL_STATE%KLEV, NCLV, &
       & GLOBAL_STATE%NBLOCKS, GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
       & GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
@@ -324,7 +353,7 @@ END IF
 
 IF (IRANK == 0) THEN
   ! Write summary row and close timing CSV
-  WRITE(IOTIMING, '(A,A,F12.4)') 'total', ',', ZTIME_TOTAL*1000.0_JPRD
+  WRITE(IOTIMING, '(A,A,F12.4,A)') 'total', ',', ZTIME_TOTAL*1000.0_JPRD, ',,,'
   CLOSE(IOTIMING)
 
   WRITE(0,'(1X,A)')           '============================================'
