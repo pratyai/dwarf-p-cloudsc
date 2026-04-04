@@ -15,14 +15,13 @@ CONTAINS
 
   ! SC2026: NVHPC has no real(2) pow/exp/sqrt/abs/sign. These helpers
   ! promote to FP64, compute, and return JPRL (FP32 in HALF mode).
-  ! Inputs are JPRD so they accept both JPRB and JPRL without kind
-  ! mismatch — NVHPC promotes narrower kinds to wider on call.
-  ! For FP64/FP32 builds the compiler optimizes away the conversions.
+  ! Safe power functions that work at JPRL precision.
+  ! JPRL is FP32 in HALF mode, JPRB otherwise.
   ELEMENTAL FUNCTION ZPOW(BASE, EXPO) RESULT(RES)
     !$acc routine seq
     REAL(KIND=JPRL), INTENT(IN) :: BASE, EXPO
     REAL(KIND=JPRL) :: RES
-    RES = REAL(REAL(BASE, JPRD)**REAL(EXPO, JPRD), JPRL)
+    RES = BASE**EXPO
   END FUNCTION ZPOW
 
   ELEMENTAL FUNCTION ZPOW_I(BASE, IEXPO) RESULT(RES)
@@ -30,7 +29,7 @@ CONTAINS
     REAL(KIND=JPRL), INTENT(IN) :: BASE
     INTEGER, INTENT(IN) :: IEXPO
     REAL(KIND=JPRL) :: RES
-    RES = REAL(REAL(BASE, JPRD)**IEXPO, JPRL)
+    RES = BASE**IEXPO
   END FUNCTION ZPOW_I
 
   SUBROUTINE CLOUDSC_SCC_K_CACHING (KIDIA, KFDIA, KLON, KLEV, PTSPHY, PT, PQ, TENDENCY_TMP_T, TENDENCY_TMP_Q, TENDENCY_TMP_A,  &
@@ -1496,7 +1495,7 @@ CONTAINS
           
           ZVPICE = (FOEEICE(ZTP1(JK_I))*RV) / RD
           ZVPLIQ = ZVPICE*ZFOKOOP
-          ZICENUCLEI = 1000.0_JPRL*EXP(REAL((12.96_JPRL*(ZVPLIQ - ZVPICE)) / ZVPLIQ - 0.639_JPRL, JPRD))
+          ZICENUCLEI = 1000.0_JPRL*EXP((12.96_JPRL*(ZVPLIQ - ZVPICE)) / ZVPLIQ - 0.639_JPRL)
           
           !------------------------------------------------
           !   2.4e-2 is conductivity of air
@@ -1583,7 +1582,7 @@ CONTAINS
           
           ZVPICE = (FOEEICE(ZTP1(JK_I))*RV) / RD
           ZVPLIQ = ZVPICE*ZFOKOOP
-          ZICENUCLEI = 1000.0_JPRL*EXP(REAL((12.96_JPRL*(ZVPLIQ - ZVPICE)) / ZVPLIQ - 0.639_JPRL, JPRD))
+          ZICENUCLEI = 1000.0_JPRL*EXP((12.96_JPRL*(ZVPLIQ - ZVPICE)) / ZVPLIQ - 0.639_JPRL)
           
           !-----------------------------------------------------
           ! RICEINIT=1.E-12_JPRL is initial mass of ice particle
@@ -1739,7 +1738,7 @@ CONTAINS
         !-----------------------------------------------------
         IF (ZICECLD > ZEPSEC) THEN
           
-          ZZCO = PTSPHY*YRECLDP%RSNOWLIN1*EXP(REAL(YRECLDP%RSNOWLIN2*(ZTP1(JK_I) - RTT), JPRD))
+          ZZCO = PTSPHY*YRECLDP%RSNOWLIN1*EXP(YRECLDP%RSNOWLIN2*(ZTP1(JK_I) - RTT))
           
           IF (YRECLDP%LAERICEAUTO) THEN
             ZLCRIT = PICRIT_AER(JL, JK)
@@ -1749,7 +1748,7 @@ CONTAINS
             ZLCRIT = YRECLDP%RLCRITSNOW
           END IF
           
-          ZSNOWAUT = ZZCO*(1.0_JPRL - EXP(REAL(-ZPOW_I(ZICECLD / ZLCRIT, 2), JPRD)))
+          ZSNOWAUT = ZZCO*(1.0_JPRL - EXP(-ZPOW_I(ZICECLD / ZLCRIT, 2)))
           ZSOLQB(NCLDQS, NCLDQI) = ZSOLQB(NCLDQS, NCLDQI) + ZSNOWAUT
           
         END IF
@@ -1793,7 +1792,7 @@ CONTAINS
           ! to REPLACE this with an explicit collection parametrization
           !------------------------------------------------------------------
           ZPRECIP = (ZPFPLSX(JK_I, NCLDQS) + ZPFPLSX(JK_I, NCLDQR)) / MAX(ZEPSEC, ZCOVPTOT)
-          ZCFPR = 1.0_JPRL + YRECLDP%RPRC1*SQRT(REAL(MAX(ZPRECIP, 0.0_JPRL), JPRD))
+          ZCFPR = 1.0_JPRL + YRECLDP%RPRC1*SQRT(MAX(ZPRECIP, 0.0_JPRL))
           !      ZCFPR=1.0_JPRL + RPRC1*SQRT(MAX(ZPRECIP,0.0_JPRL))*&
           !       &ZCOVPTOT(JL)/(MAX(ZA(JL,JK),ZEPSEC))
           
@@ -1807,7 +1806,7 @@ CONTAINS
           
           IF (ZLIQCLD / ZLCRIT < 20.0_JPRL) THEN
             ! Security for exp for some compilers
-            ZRAINAUT = ZZCO*(1.0_JPRL - EXP(REAL(-ZPOW_I(ZLIQCLD / ZLCRIT, 2), JPRD)))
+            ZRAINAUT = ZZCO*(1.0_JPRL - EXP(-ZPOW_I(ZLIQCLD / ZLCRIT, 2)))
           ELSE
             ZRAINAUT = ZZCO
           END IF
@@ -1951,7 +1950,7 @@ CONTAINS
         ZTDMTW0 = ZTP1(JK_I) - RTT - ZSUBSAT*(ZTW1 + ZTW2*(PAP(JL, JK) - ZTW3) - ZTW4*(ZTP1(JK_I) - ZTW5))
         ! Not implicit yet...
         ! Ensure ZCONS1 is positive so that ZMELTMAX=0 if ZTDMTW0<0
-        ZCONS1 = ABS(REAL((PTSPHY*(1.0_JPRL + 0.5_JPRL*ZTDMTW0)) / YRECLDP%RTAUMEL, JPRD))
+        ZCONS1 = ABS((PTSPHY*(1.0_JPRL + 0.5_JPRL*ZTDMTW0)) / YRECLDP%RTAUMEL)
         ZMELTMAX = MAX(ZTDMTW0*ZCONS1*ZRLDCP, 0.0_JPRL)
       END IF
       
@@ -2008,7 +2007,7 @@ CONTAINS
             
             ! Calculate freezing rate based on Bigg(1953) and Wisner(1972)
             ZTEMP = YRECLDP%RCL_FZRAB*(ZTP1(JK_I) - RTT)
-            ZFRZ = PTSPHY*(YRECLDP%RCL_CONST5R / ZRHO)*(EXP(REAL(ZTEMP, JPRD)) - 1._JPRL)*ZPOW(ZLAMBDA, REAL(YRECLDP%RCL_CONST6R, JPRL))
+            ZFRZ = PTSPHY*(YRECLDP%RCL_CONST5R / ZRHO)*(EXP(ZTEMP) - 1._JPRL)*ZPOW(ZLAMBDA, REAL(YRECLDP%RCL_CONST6R, JPRL))
             ZFRZMAX = MAX(ZFRZ, 0.0_JPRL)
             
           ELSE
@@ -2016,7 +2015,7 @@ CONTAINS
             ! Majority of raindrops only partially melted
             ! Refreeze with a shorter timescale (reverse of melting...for now)
             
-            ZCONS1 = ABS(REAL((PTSPHY*(1.0_JPRL + 0.5_JPRL*(RTT - ZTP1(JK_I)))) / YRECLDP%RTAUMEL, JPRD))
+            ZCONS1 = ABS((PTSPHY*(1.0_JPRL + 0.5_JPRL*(RTT - ZTP1(JK_I)))) / YRECLDP%RTAUMEL)
             ZFRZMAX = MAX((RTT - ZTP1(JK_I))*ZCONS1*ZRLDCP, 0.0_JPRL)
             
           END IF
@@ -2069,13 +2068,13 @@ CONTAINS
         
         IF (LLO1) THEN
           ! note: zpreclr is a rain flux
-          ZPRECLR = (ZQXFG(NCLDQR)*ZCOVPCLR) / SIGN(MAX(ABS(REAL(ZCOVPTOT*ZDTGDP, JPRD)), REAL(ZEPSILON, JPRD)), REAL(ZCOVPTOT*ZDTGDP, JPRD))
+          ZPRECLR = (ZQXFG(NCLDQR)*ZCOVPCLR) / SIGN(MAX(ABS(ZCOVPTOT*ZDTGDP), ZEPSILON), ZCOVPTOT*ZDTGDP)
           
           !--------------------------------------
           ! actual microphysics formula in zbeta
           !--------------------------------------
           
-          ZBETA1 = ((SQRT(REAL(PAP(JL, JK) / PAPH(JL, KLEV + 1), JPRD)) / YRECLDP%RVRFACTOR)*ZPRECLR) / MAX(ZCOVPCLR, ZEPSEC)
+          ZBETA1 = ((SQRT(PAP(JL, JK) / PAPH(JL, KLEV + 1)) / YRECLDP%RVRFACTOR)*ZPRECLR) / MAX(ZCOVPCLR, ZEPSEC)
           
           ZBETA = RG*YRECLDP%RPECONS*0.5_JPRL*ZPOW(ZBETA1, 0.5777_JPRL)
           
@@ -2218,13 +2217,13 @@ CONTAINS
         
         IF (LLO1) THEN
           ! note: zpreclr is a rain flux a
-          ZPRECLR = (ZQXFG(NCLDQS)*ZCOVPCLR) / SIGN(MAX(ABS(REAL(ZCOVPTOT*ZDTGDP, JPRD)), REAL(ZEPSILON, JPRD)), REAL(ZCOVPTOT*ZDTGDP, JPRD))
+          ZPRECLR = (ZQXFG(NCLDQS)*ZCOVPCLR) / SIGN(MAX(ABS(ZCOVPTOT*ZDTGDP), ZEPSILON), ZCOVPTOT*ZDTGDP)
           
           !--------------------------------------
           ! actual microphysics formula in zbeta
           !--------------------------------------
           
-          ZBETA1 = ((SQRT(REAL(PAP(JL, JK) / PAPH(JL, KLEV + 1), JPRD)) / YRECLDP%RVRFACTOR)*ZPRECLR) / MAX(ZCOVPCLR, ZEPSEC)
+          ZBETA1 = ((SQRT(PAP(JL, JK) / PAPH(JL, KLEV + 1)) / YRECLDP%RVRFACTOR)*ZPRECLR) / MAX(ZCOVPCLR, ZEPSEC)
           
           ZBETA = RG*YRECLDP%RPECONS*ZPOW(ZBETA1, 0.5777_JPRL)
           

@@ -46,7 +46,7 @@ set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mframe")
 set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mbyteswapio")
 set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mstack_arrays")
 set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mrecursive")
-set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Kieee")
+set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mfprelaxed -Mfprelaxed=intrinsic")
 set(ECBUILD_Fortran_FLAGS "${ECBUILD_Fortran_FLAGS} -Mdaz")
 
 set( ECBUILD_Fortran_FLAGS_BIT "-O2 -gopt" )
