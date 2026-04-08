@@ -48,7 +48,20 @@ build_precision() {
   echo "============================================"
   echo "  Building ${LABEL}"
   echo "============================================"
+
+  # Preserve output/data files from build/ before --clean wipes it
+  local PRESERVE_DIR="${STASH_DIR}/_preserve"
+  mkdir -p "${PRESERVE_DIR}"
+  if ls build/*.h5 build/*.csv 2>/dev/null | head -1 >/dev/null 2>&1; then
+    cp -a build/*.h5 build/*.csv "${PRESERVE_DIR}/" 2>/dev/null || true
+  fi
+
   ./cloudsc-bundle build --clean ${COMMON_OPTS} ${EXTRA}
+
+  # Restore preserved files
+  if ls "${PRESERVE_DIR}"/*.h5 "${PRESERVE_DIR}"/*.csv 2>/dev/null | head -1 >/dev/null 2>&1; then
+    cp -a "${PRESERVE_DIR}"/*.h5 "${PRESERVE_DIR}"/*.csv build/ 2>/dev/null || true
+  fi
 
   if [ ! -f build/${BINARY} ]; then
     echo "FATAL: ${LABEL} binary not found at build/${BINARY}" >&2
@@ -75,8 +88,7 @@ build_precision() {
 }
 
 # --- Build all precisions (FP16 first — most fragile, fail fast) ---
-build_precision "FP16 (aggressive half)"      fp16   "--half-precision"
-build_precision "FP16r (restricted half)"     fp16r  "--half-restricted"
+build_precision "FP16 (half precision)"        fp16   "--half-precision"
 build_precision "FP32 (single precision)"     fp32   "--single-precision"
 build_precision "FP64 (double precision)"     fp64   ""
 
@@ -86,7 +98,7 @@ echo "============================================"
 echo "  Restoring binaries to build/bin/"
 echo "============================================"
 mkdir -p build/bin
-for ext in fp64 fp32 fp16 fp16r; do
+for ext in fp64 fp32 fp16; do
   if [ -f ${STASH_DIR}/${ext} ]; then
     cp ${STASH_DIR}/${ext} build/${BINARY}.${ext}
     echo "  OK: build/${BINARY}.${ext}"
@@ -107,14 +119,14 @@ done
 echo ""
 echo "============================================"
 echo "  Done. Binaries:"
-for ext in fp64 fp32 fp16 fp16r; do
+for ext in fp64 fp32 fp16; do
   if [ -f build/${BINARY}.${ext} ]; then
     echo "    build/${BINARY}.${ext}"
   fi
 done
 echo ""
 echo "  SASS dumps:"
-for ext in fp64 fp32 fp16 fp16r; do
+for ext in fp64 fp32 fp16; do
   if [ -f ${PTX_DIR}/${ext}/cloudsc.sass ]; then
     sz=$(wc -c < ${PTX_DIR}/${ext}/cloudsc.sass | tr -d ' ')
     echo "    ${PTX_DIR}/${ext}/cloudsc.sass  (${sz} bytes)"

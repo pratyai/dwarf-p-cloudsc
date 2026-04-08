@@ -41,7 +41,7 @@ CHARACTER(LEN=8)   :: PRECISION_TAG     ! 'fp16', 'fp32', or 'fp64'
 
 ! Timing
 INTEGER(KIND=8)    :: ICLOCK_START, ICLOCK_STEP, ICLOCK_END, ICLOCK_RATE
-INTEGER(KIND=8)    :: ICLOCK_H2D, ICLOCK_AUX
+INTEGER(KIND=8)    :: ICLOCK_H2D, ICLOCK_AUX, ICLOCK_SUB
 REAL(KIND=JPRD)    :: ZTIME_TOTAL, ZTIME_STEP
 REAL(KIND=JPRD)    :: ZTIME_H2D, ZTIME_KERNEL, ZTIME_UPDATE, ZTIME_D2H
 INTEGER, PARAMETER :: IOTIMING = 42     ! Unit for timing CSV
@@ -269,11 +269,14 @@ DO JSTEP = 1, NSTEPS
   END IF
 
   CALL SYSTEM_CLOCK(ICLOCK_STEP)
+  ZTIME_KERNEL = 0.0_JPRD
+  ZTIME_UPDATE = 0.0_JPRD
 
   ! Inner sub-substep loop: NSUB kernel calls per outer step
   DO JSUB = 1, NSUB
 
     ! Call the kernel — all arrays are already present on device
+    CALL SYSTEM_CLOCK(ICLOCK_AUX)
     CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
          & NGPTOT, GLOBAL_STATE%NBLOCKS, NGPTOTG, &
          & GLOBAL_STATE%KFLDX, ZTSPHY_INNER, &
@@ -298,6 +301,8 @@ DO JSTEP = 1, NSTEPS
          & )
 
     !$acc wait
+    CALL SYSTEM_CLOCK(ICLOCK_SUB)
+    ZTIME_KERNEL = ZTIME_KERNEL + REAL(ICLOCK_SUB - ICLOCK_AUX, JPRD) / REAL(ICLOCK_RATE, JPRD)
 
     ! Apply tendencies: forward Euler state update (CPU-side)
     ! B_LOC layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
@@ -332,12 +337,10 @@ DO JSTEP = 1, NSTEPS
       !$acc update device(GLOBAL_STATE%B_LOC)
     END IF
 
-  END DO  ! JSUB
+    CALL SYSTEM_CLOCK(ICLOCK_AUX)
+    ZTIME_UPDATE = ZTIME_UPDATE + REAL(ICLOCK_AUX - ICLOCK_SUB, JPRD) / REAL(ICLOCK_RATE, JPRD)
 
-  CALL SYSTEM_CLOCK(ICLOCK_AUX)
-  ! kernel+update time covers all NSUB sub-substeps
-  ZTIME_KERNEL = REAL(ICLOCK_AUX - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
-  ZTIME_UPDATE = 0.0_JPRD  ! lumped into kernel time when NSUB>1
+  END DO  ! JSUB
 
   ! NaN/Inf check — compile with -DNAN_CHECK to enable
 #ifdef NAN_CHECK

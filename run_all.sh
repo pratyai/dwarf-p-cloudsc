@@ -16,12 +16,19 @@ export CUDA_VISIBLE_DEVICES=0
 # Run CLOUDSC GPU SCC k-caching at multiple precisions and timestep counts.
 # Produces HDF5 output files in build/ for later comparison.
 #
-# Usage: sbatch run_all.sh [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+# Usage: sbatch run_all.sh [--skip-existing] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
 # Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
 # Runs at 1x, 2x, 4x of base grid (163840 columns)
 # Temporal refinement: NSUB_COARSE vs NSUB_FINE, same NSTEPS
+# Pass --skip-existing to skip runs whose output files already exist.
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
+SKIP_EXISTING=0
+if [ "${1:-}" = "--skip-existing" ]; then
+  SKIP_EXISTING=1
+  shift
+fi
 
 NSTEPS=${1:-10}
 NPROMA=${2:-128}
@@ -76,14 +83,28 @@ run_config() {
   local STEPS=$3
   local NSUB=${4:-1}
 
+  # Predict output filename to check if already computed
+  local BASE="cloudsc_output_${BIN_EXT}_${STEPS}steps_${NGPTOTG}col"
+  local OUTFILE
+  if [ "${NSUB}" -gt 1 ]; then
+    OUTFILE="${BASE}_137lev_nsub${NSUB}.h5"
+    [ -f "${OUTFILE}" ] || OUTFILE="${BASE}_nsub${NSUB}.h5"
+  else
+    OUTFILE="${BASE}_137lev.h5"
+    [ -f "${OUTFILE}" ] || OUTFILE="${BASE}.h5"
+  fi
+
+  if [ ${SKIP_EXISTING} -eq 1 ] && [ -f "${OUTFILE}" ]; then
+    echo ""
+    echo ">>> Skipping ${LABEL} (${OUTFILE} exists)"
+    return 0
+  fi
+
   echo ""
   echo ">>> Running ${LABEL}..."
   ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
 
-  # Precision tag matches the binary extension (fp64/fp32/fp16)
-  # Filename depends on NSUB: _nsubN suffix when NSUB>1
-  local BASE="cloudsc_output_${BIN_EXT}_${STEPS}steps_${NGPTOTG}col"
-  local OUTFILE
+  # Re-check after run
   if [ "${NSUB}" -gt 1 ]; then
     OUTFILE="${BASE}_137lev_nsub${NSUB}.h5"
     [ -f "${OUTFILE}" ] || OUTFILE="${BASE}_nsub${NSUB}.h5"
@@ -138,17 +159,33 @@ if [ ! -f input_2xklev.h5 ]; then
   ln -sf "${INPUT_2X}" input_2xklev.h5
 fi
 
-echo ""
-echo ">>> Running spatial coarse (KLEV=137, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
-${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
+SPATIAL_COARSE="cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_137lev.h5"
+SPATIAL_FINE="cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_274lev.h5"
+SPATIAL_FINE_NSUB2="cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_274lev_nsub2.h5"
 
-echo ""
-echo ">>> Running spatial fine (KLEV=274, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
-CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
+if [ ${SKIP_EXISTING} -eq 1 ] && [ -f "${SPATIAL_COARSE}" ]; then
+  echo ">>> Skipping spatial coarse (${SPATIAL_COARSE} exists)"
+else
+  echo ""
+  echo ">>> Running spatial coarse (KLEV=137, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+  ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
+fi
 
-echo ""
-echo ">>> Running spatial fine + temporal fine (KLEV=274, nsub=2, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
-CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 2
+if [ ${SKIP_EXISTING} -eq 1 ] && [ -f "${SPATIAL_FINE}" ]; then
+  echo ">>> Skipping spatial fine (${SPATIAL_FINE} exists)"
+else
+  echo ""
+  echo ">>> Running spatial fine (KLEV=274, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+  CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
+fi
+
+if [ ${SKIP_EXISTING} -eq 1 ] && [ -f "${SPATIAL_FINE_NSUB2}" ]; then
+  echo ">>> Skipping spatial fine+temporal (${SPATIAL_FINE_NSUB2} exists)"
+else
+  echo ""
+  echo ">>> Running spatial fine + temporal fine (KLEV=274, nsub=2, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+  CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 2
+fi
 
 echo ""
 echo "============================================"
