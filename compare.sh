@@ -9,114 +9,75 @@
 
 set -euo pipefail
 
-# Auto-discover CLOUDSC HDF5 output files and run all comparisons.
-# Writes aggregated stats to a SQLite database, then runs the reporter.
-#
-# Expects files produced by run_all.sh in build/:
-#   cloudsc_output_{prec}_{N}steps_{G}col.h5
-#
-# Grid sizes and precisions are auto-discovered from filenames.
-# Comparisons run in parallel; results are merged into a single DB.
+# Compare CLOUDSC output files and produce a SQLite database + report.
+# Takes the same arguments as run_all.sh so filenames are deterministic.
 #
 # Usage:
-#   sbatch compare.sh [NPROMA]
-#   Default: NPROMA=128
+#   sbatch compare.sh [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+#   Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 BUILD="${SCRIPT_DIR}/build"
 DB="${SCRIPT_DIR}/cloudsc_results.db"
+COMPARE="${SCRIPT_DIR}/compare_precision.py"
 
-NPROMA=${1:-128}
+NSTEPS=${1:-10}
+NPROMA=${2:-128}
+TPHYS=${3:-900.0}
+NSUB_COARSE=${4:-1}
+NSUB_FINE=${5:-2}
+
+NGPTOTG_BASE=163840
+GRID_MULTIPLIERS=(1 2 4)
+SPATIAL_NGPTOTG=40960
 
 # --- Activate venv ---
 if [ ! -f "${SCRIPT_DIR}/venv/bin/activate" ]; then
   echo "FATAL: venv not found at ${SCRIPT_DIR}/venv/" >&2
-  echo "  Run:  uv venv --python 3.12 venv && source venv/bin/activate && uv pip install h5py polars numpy" >&2
   exit 1
 fi
 source "${SCRIPT_DIR}/venv/bin/activate"
 
-# --- Discover HDF5 files ---
-echo "Scanning ${BUILD}/ for CLOUDSC output files..."
-
-declare -A FILES  # key="fp64_10_163840" value="/path/to/file.h5"
-declare -A GRIDS  # unique ngptotg values
-
-for f in ${BUILD}/cloudsc_output_*.h5; do
-  [ -f "$f" ] || continue
-  base=$(basename "$f")
-  if [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col_([0-9]+)lev\.h5 ]]; then
-    # Has explicit lev suffix — only ingest base KLEV (137)
-    if [ "${BASH_REMATCH[4]}" != "137" ]; then
-      echo "  Skipping non-base KLEV: $base" >&2
-      continue
-    fi
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    ngpt="${BASH_REMATCH[3]}"
-    FILES["${prec}_${nsteps}_${ngpt}"]="$f"
-    GRIDS["${ngpt}"]=1
-  elif [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col\.h5 ]]; then
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    ngpt="${BASH_REMATCH[3]}"
-    FILES["${prec}_${nsteps}_${ngpt}"]="$f"
-    GRIDS["${ngpt}"]=1
-  elif [[ "$base" =~ cloudsc_output_(fp[0-9]+r?)_([0-9]+)steps\.h5 ]]; then
-    # Legacy format (no col suffix) — assume base grid
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    FILES["${prec}_${nsteps}_163840"]="$f"
-    GRIDS["163840"]=1
+# --- Helper: file path for a given config ---
+outfile() {
+  local prec=$1 steps=$2 ngpt=$3 nsub=${4:-1}
+  local base="${BUILD}/cloudsc_output_${prec}_${steps}steps_${ngpt}col"
+  if [ "$nsub" -gt 1 ]; then
+    # NSUB>1: try _137lev_nsubN.h5 first, then _nsubN.h5 (old format)
+    local f="${base}_137lev_nsub${nsub}.h5"
+    if [ -f "$f" ]; then echo "$f"; return; fi
+    echo "${base}_nsub${nsub}.h5"
   else
-    echo "WARNING: Unexpected filename format: $base (skipping)" >&2
+    # NSUB=1: try _137lev.h5 first, then plain .h5
+    local f="${base}_137lev.h5"
+    if [ -f "$f" ]; then echo "$f"; return; fi
+    echo "${base}.h5"
   fi
-done
+}
 
-if [ ${#FILES[@]} -eq 0 ]; then
-  echo "FATAL: No cloudsc_output_*.h5 files found in ${BUILD}/" >&2
-  echo "  Run run_all.sh first." >&2
-  exit 1
-fi
+# --- Helper: check file exists ---
+require() {
+  if [ ! -f "$1" ]; then
+    echo "MISSING: $1 (skipping)" >&2
+    return 1
+  fi
+}
 
-IFS=$'\n' GRID_SIZES=($(printf '%s\n' "${!GRIDS[@]}" | sort -n)); unset IFS
-
-echo "Found files:"
-for key in $(echo "${!FILES[@]}" | tr ' ' '\n' | sort); do
-  echo "  ${key} -> $(basename ${FILES[$key]})"
-done
-echo ""
-echo "Grid sizes: ${GRID_SIZES[*]}"
-echo ""
-
-# --- Delete old DB so we start fresh each time ---
+# --- Delete old DB so we start fresh ---
 rm -f "${DB}"
 
 # --- Ingest timing CSVs ---
 echo "Ingesting timing data..."
-for f in ${BUILD}/cloudsc_timing_*.csv; do
-  [ -f "$f" ] || continue
-  base=$(basename "$f")
-  if [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col_([0-9]+)lev\.csv ]]; then
-    if [ "${BASH_REMATCH[4]}" != "137" ]; then
-      continue
-    fi
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    ngpt="${BASH_REMATCH[3]}"
-  elif [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps_([0-9]+)col\.csv ]]; then
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    ngpt="${BASH_REMATCH[3]}"
-  elif [[ "$base" =~ cloudsc_timing_(fp[0-9]+r?)_([0-9]+)steps\.csv ]]; then
-    prec="${BASH_REMATCH[1]}"
-    nsteps="${BASH_REMATCH[2]}"
-    ngpt="163840"
-  else
-    continue
-  fi
-  python -c "
-import sqlite3, csv, sys
+for MULT in "${GRID_MULTIPLIERS[@]}"; do
+  NGPTOTG=$((NGPTOTG_BASE * MULT))
+  for prec in fp64 fp32 fp16; do
+    for steps in ${NSTEPS}; do
+      # Skip FP32/FP16 — they don't have nsub variants
+      csv="${BUILD}/cloudsc_timing_${prec}_${steps}steps_${NGPTOTG}col_137lev.csv"
+      [ -f "$csv" ] || csv="${BUILD}/cloudsc_timing_${prec}_${steps}steps_${NGPTOTG}col.csv"
+      [ -f "$csv" ] || continue
+      python -c "
+import sqlite3, csv
 conn = sqlite3.connect('${DB}')
 conn.execute('''CREATE TABLE IF NOT EXISTS timing (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,126 +91,118 @@ conn.execute('''CREATE TABLE IF NOT EXISTS timing (
     update_ms REAL,
     d2h_ms    REAL
 )''')
-with open('${f}') as fh:
+with open('${csv}') as fh:
     reader = csv.DictReader(fh)
     for row in reader:
         def flt(k):
             v = row.get(k, '').strip()
             return float(v) if v else None
         conn.execute('INSERT INTO timing (precision,nsteps,ngptotg,nproma,step,wall_ms,kernel_ms,update_ms,d2h_ms) VALUES (?,?,?,?,?,?,?,?,?)',
-            ('${prec}', ${nsteps}, ${ngpt}, ${NPROMA}, row['step'].strip(), float(row['wall_ms']),
+            ('${prec}', ${steps}, ${NGPTOTG}, ${NPROMA}, row['step'].strip(), float(row['wall_ms']),
              flt('kernel_ms'), flt('update_ms'), flt('d2h_ms')))
 conn.commit()
 conn.close()
 "
-  echo "  ${base} -> db"
+      echo "  ${prec} ${steps}steps ${NGPTOTG}col -> db"
+    done
+  done
 done
 echo ""
 
 # --- Run comparisons in parallel ---
-COMPARE="${SCRIPT_DIR}/compare_precision.py"
 TMPDIR_CMP=$(mktemp -d "${SCRIPT_DIR}/.compare_tmp.XXXXXX")
 PIDS=()
 LABELS=()
 
 run_compare() {
-  local label=$1
-  local ref_key=$2
-  local test_key=$3
-  local ngpt=$4
-
-  local ref_file="${FILES[$ref_key]}"
-  local test_file="${FILES[$test_key]}"
-
-  local ref_prec="${ref_key%%_*}"
-  local ref_rest="${ref_key#*_}"; local ref_n="${ref_rest%%_*}"
-  local test_prec="${test_key%%_*}"
-  local test_rest="${test_key#*_}"; local test_n="${test_rest%%_*}"
-
-  # Each comparison gets its own temp DB to avoid SQLite write contention
+  local label=$1 ref_file=$2 test_file=$3
+  local ref_prec=$4 ref_n=$5 test_prec=$6 test_n=$7 ngpt=$8
   local tmpdb="${TMPDIR_CMP}/${label}.db"
 
   echo "  Launching: ${label}"
-
   python "${COMPARE}" \
     --label "${label}" \
     --ref-precision "${ref_prec}" --ref-nsteps "${ref_n}" \
     --test-precision "${test_prec}" --test-nsteps "${test_n}" \
     --db "${tmpdb}" --ngptotg "${ngpt}" --nproma "${NPROMA}" \
     "${ref_file}" "${test_file}" &
-
   PIDS+=($!)
   LABELS+=("${label}")
 }
 
 echo "Scheduling comparisons..."
 
-for NGPT in "${GRID_SIZES[@]}"; do
-  # Collect FP64 step counts for this grid
-  FP64_STEPS_G=()
-  for key in "${!FILES[@]}"; do
-    if [[ "$key" =~ ^fp64_([0-9]+)_${NGPT}$ ]]; then
-      FP64_STEPS_G+=("${BASH_REMATCH[1]}")
-    fi
-  done
+for MULT in "${GRID_MULTIPLIERS[@]}"; do
+  NGPTOTG=$((NGPTOTG_BASE * MULT))
+  BASELINE=$(outfile fp64 ${NSTEPS} ${NGPTOTG} ${NSUB_COARSE})
+  require "${BASELINE}" || continue
 
-  [ ${#FP64_STEPS_G[@]} -eq 0 ] && continue
-
-  IFS=$'\n' FP64_SORTED_G=($(printf '%s\n' "${FP64_STEPS_G[@]}" | sort -n)); unset IFS
-
-  BASELINE_STEPS=${FP64_SORTED_G[0]}
-  BASELINE_KEY="fp64_${BASELINE_STEPS}_${NGPT}"
-
-  # Temporal refinement
-  for nsteps in "${FP64_SORTED_G[@]}"; do
-    [ "$nsteps" = "$BASELINE_STEPS" ] && continue
-    if [ "$nsteps" -gt "$BASELINE_STEPS" ]; then
-      key="fp64_${nsteps}_${NGPT}"
-      run_compare "temporal_refine_${BASELINE_STEPS}vs${nsteps}_${NGPT}col" \
-        "${BASELINE_KEY}" "${key}" "${NGPT}"
-    fi
-  done
-
-  # Precision
-  for prec in fp32 fp16 fp16r; do
-    key="${prec}_${BASELINE_STEPS}_${NGPT}"
-    if [ -n "${FILES[$key]+x}" ]; then
-      run_compare "precision_fp64vs${prec#fp}_${BASELINE_STEPS}steps_${NGPT}col" \
-        "${BASELINE_KEY}" "${key}" "${NGPT}"
-    fi
-  done
-done
-
-# --- Spatial refinement: restrict 274-level outputs and compare ---
-for f in ${BUILD}/cloudsc_output_fp64_*_274lev.h5; do
-  [ -f "$f" ] || continue
-  base=$(basename "$f")
-  if [[ "$base" =~ cloudsc_output_fp64_([0-9]+)steps_([0-9]+)col_274lev\.h5 ]]; then
-    sp_nsteps="${BASH_REMATCH[1]}"
-    sp_ngpt="${BASH_REMATCH[2]}"
-    coarse_file="${BUILD}/cloudsc_output_fp64_${sp_nsteps}steps_${sp_ngpt}col_137lev.h5"
-    if [ ! -f "${coarse_file}" ]; then
-      echo "  Skipping spatial (no coarse match): $base" >&2
-      continue
-    fi
-    restricted="${BUILD}/cloudsc_output_fp64_2xklev_restricted_${sp_nsteps}steps_${sp_ngpt}col.h5"
-    label="spatial_refine_klev137vs274_${sp_ngpt}col"
-    tmpdb="${TMPDIR_CMP}/${label}.db"
-
-    echo "  Launching: ${label} (restrict + compare)"
-    (
-      python "${SCRIPT_DIR}/vertical_refine.py" restrict "$f" "${restricted}" --klev-coarse 137
-      python "${COMPARE}" \
-        --label "${label}" \
-        --ref-precision fp64 --ref-nsteps "${sp_nsteps}" \
-        --test-precision fp64 --test-nsteps "${sp_nsteps}" \
-        --db "${tmpdb}" --ngptotg "${sp_ngpt}" --nproma "${NPROMA}" \
-        "${coarse_file}" "${restricted}"
-    ) &
-    PIDS+=($!)
-    LABELS+=("${label}")
+  # Temporal refinement: NSUB_COARSE vs NSUB_FINE (same NSTEPS, FP64)
+  FINE=$(outfile fp64 ${NSTEPS} ${NGPTOTG} ${NSUB_FINE})
+  if require "${FINE}" 2>/dev/null; then
+    run_compare "temporal_refine_nsub${NSUB_COARSE}vs${NSUB_FINE}_${NSTEPS}steps_${NGPTOTG}col" \
+      "${BASELINE}" "${FINE}" fp64 ${NSTEPS} fp64 ${NSTEPS} ${NGPTOTG}
   fi
+
+  # Precision: FP32 and FP16 vs FP64
+  for prec in fp32 fp16; do
+    TEST=$(outfile ${prec} ${NSTEPS} ${NGPTOTG} ${NSUB_COARSE})
+    if require "${TEST}" 2>/dev/null; then
+      run_compare "precision_fp64vs${prec#fp}_${NSTEPS}steps_${NGPTOTG}col" \
+        "${BASELINE}" "${TEST}" fp64 ${NSTEPS} ${prec} ${NSTEPS} ${NGPTOTG}
+    fi
+  done
 done
+
+# --- Spatial refinement ---
+# Config 1: KLEV=137, nsub=1 (coarse baseline)
+COARSE=$(outfile fp64 ${NSTEPS} ${SPATIAL_NGPTOTG} ${NSUB_COARSE})
+
+# Config 2: KLEV=274, nsub=1 (spatial only)
+FINE_274="${BUILD}/cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_274lev.h5"
+
+# Config 3: KLEV=274, nsub=2 (spatial + temporal)
+FINE_274_NSUB2="${BUILD}/cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_274lev_nsub2.h5"
+
+# Compare 1 vs 2: spatial refinement only
+if require "${COARSE}" 2>/dev/null && require "${FINE_274}" 2>/dev/null; then
+  RESTRICTED="${BUILD}/cloudsc_output_fp64_2xklev_restricted_${NSTEPS}steps_${SPATIAL_NGPTOTG}col.h5"
+  LABEL="spatial_refine_klev137vs274_${SPATIAL_NGPTOTG}col"
+  TMPDB="${TMPDIR_CMP}/${LABEL}.db"
+
+  echo "  Launching: ${LABEL} (restrict + compare)"
+  (
+    python "${SCRIPT_DIR}/vertical_refine.py" restrict "${FINE_274}" "${RESTRICTED}" --klev-coarse 137
+    python "${COMPARE}" \
+      --label "${LABEL}" \
+      --ref-precision fp64 --ref-nsteps "${NSTEPS}" \
+      --test-precision fp64 --test-nsteps "${NSTEPS}" \
+      --db "${TMPDB}" --ngptotg "${SPATIAL_NGPTOTG}" --nproma "${NPROMA}" \
+      "${COARSE}" "${RESTRICTED}"
+  ) &
+  PIDS+=($!)
+  LABELS+=("${LABEL}")
+fi
+
+# Compare 1 vs 3: spatial + temporal refinement
+if require "${COARSE}" 2>/dev/null && require "${FINE_274_NSUB2}" 2>/dev/null; then
+  RESTRICTED_NSUB2="${BUILD}/cloudsc_output_fp64_2xklev_restricted_nsub2_${NSTEPS}steps_${SPATIAL_NGPTOTG}col.h5"
+  LABEL="spatial_temporal_refine_klev274_nsub2_${SPATIAL_NGPTOTG}col"
+  TMPDB="${TMPDIR_CMP}/${LABEL}.db"
+
+  echo "  Launching: ${LABEL} (restrict + compare)"
+  (
+    python "${SCRIPT_DIR}/vertical_refine.py" restrict "${FINE_274_NSUB2}" "${RESTRICTED_NSUB2}" --klev-coarse 137
+    python "${COMPARE}" \
+      --label "${LABEL}" \
+      --ref-precision fp64 --ref-nsteps "${NSTEPS}" \
+      --test-precision fp64 --test-nsteps "${NSTEPS}" \
+      --db "${TMPDB}" --ngptotg "${SPATIAL_NGPTOTG}" --nproma "${NPROMA}" \
+      "${COARSE}" "${RESTRICTED_NSUB2}"
+  ) &
+  PIDS+=($!)
+  LABELS+=("${LABEL}")
+fi
 
 echo ""
 echo "Waiting for ${#PIDS[@]} comparisons..."
@@ -267,11 +220,9 @@ done
 echo ""
 echo "Merging results..."
 python -c "
-import sqlite3, glob, sys
+import sqlite3, glob
 
 main = sqlite3.connect('${DB}')
-
-# Ensure schema exists (main DB may only have timing table)
 main.executescript('''
 CREATE TABLE IF NOT EXISTS comparisons (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,8 +261,6 @@ CREATE TABLE IF NOT EXISTS step_stats (
 for tmpdb_path in sorted(glob.glob('${TMPDIR_CMP}/*.db')):
     tmp = sqlite3.connect(tmpdb_path)
     tmp.row_factory = sqlite3.Row
-
-    # Copy comparisons and remap IDs
     for comp in tmp.execute('SELECT * FROM comparisons').fetchall():
         new_id = main.execute(
             '''INSERT INTO comparisons
@@ -323,7 +272,6 @@ for tmpdb_path in sorted(glob.glob('${TMPDIR_CMP}/*.db')):
              comp['ref_nsteps'], comp['test_nsteps'],
              comp['ngptotg'], comp['nproma'], comp['notes'])
         ).lastrowid
-
         for stat in tmp.execute('SELECT * FROM step_stats WHERE comparison_id=?', (comp['id'],)).fetchall():
             main.execute(
                 '''INSERT INTO step_stats
@@ -337,7 +285,6 @@ for tmpdb_path in sorted(glob.glob('${TMPDIR_CMP}/*.db')):
                  stat['power_snr_db'], stat['var_snr_db'],
                  stat['ref_min'], stat['ref_max'], stat['ref_mean'],
                  stat['test_min'], stat['test_max'], stat['test_mean']))
-
     tmp.close()
 
 main.commit()
@@ -345,7 +292,6 @@ main.close()
 print(f'Merged {len(glob.glob(\"${TMPDIR_CMP}/*.db\"))} comparison DBs')
 "
 
-# Clean up temp DBs
 rm -rf "${TMPDIR_CMP}"
 
 # --- Report ---
@@ -356,5 +302,4 @@ fi
 
 echo "Results written to: ${DB}"
 echo ""
-
 python "${SCRIPT_DIR}/report.py" --db "${DB}"

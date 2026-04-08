@@ -5,7 +5,7 @@
 ! NSTEPS substeps.  Prognostic fields (PT, PQ, PA, PCLV) are dumped to
 ! HDF5 after every step for offline comparison.
 !
-! Usage:  dwarf-cloudsc-gpu-scc-k-caching-multistep NUMOMP NGPTOTG NPROMA NSTEPS [TPHYS]
+! Usage:  dwarf-cloudsc-gpu-scc-k-caching-multistep NUMOMP NGPTOTG NPROMA NSTEPS [TPHYS] [NSUB]
 !
 ! This file is NOT part of the upstream ECMWF dwarf-P-cloudsc distribution.
 ! It was written for the SC2026 precision study.
@@ -28,10 +28,13 @@ INTEGER(KIND=JPIM) :: NUMOMP   = 1      ! OpenMP threads (GPU: always 1)
 INTEGER(KIND=JPIM) :: NGPTOTG  = 16384  ! Total grid-point columns
 INTEGER(KIND=JPIM) :: NPROMA   = 64     ! Blocking factor
 INTEGER(KIND=JPIM) :: NGPTOT            ! Local grid points (= NGPTOTG for single rank)
-INTEGER(KIND=JPIM) :: NSTEPS   = 1      ! Number of substeps toward total physical time
-INTEGER(KIND=JPIM) :: JSTEP             ! Timestep loop counter
+INTEGER(KIND=JPIM) :: NSTEPS   = 1      ! Number of outer physics steps
+INTEGER(KIND=JPIM) :: NSUB     = 1      ! Number of sub-substeps within each outer step
+INTEGER(KIND=JPIM) :: JSTEP             ! Outer step loop counter
+INTEGER(KIND=JPIM) :: JSUB              ! Inner sub-substep loop counter
 INTEGER(KIND=JPIM) :: JB, JK, JL, JM   ! Loop indices for state update
-REAL(KIND=JPRB)    :: ZTSPHY_SUB        ! Substep dt = PTSPHY / NSTEPS
+REAL(KIND=JPRB)    :: ZTSPHY_SUB        ! Outer substep dt = PTSPHY / NSTEPS
+REAL(KIND=JPRB)    :: ZTSPHY_INNER      ! Inner dt = ZTSPHY_SUB / NSUB
 CHARACTER(LEN=128) :: OUT_FILENAME      ! Output HDF5 filename
 CHARACTER(LEN=128) :: TIMING_FILENAME   ! Timing CSV filename
 CHARACTER(LEN=8)   :: PRECISION_TAG     ! 'fp16', 'fp32', or 'fp64'
@@ -94,9 +97,18 @@ IF (IARGS >= 5) THEN
   READ(CLARG(1:LENARG),*) GLOBAL_STATE%PTSPHY
 END IF
 
+! --- Parse NSUB (6th argument, optional, default=1) ---
+
+IF (IARGS >= 6) THEN
+  CALL GET_COMMAND_ARGUMENT(6, CLARG, LENARG)
+  READ(CLARG(1:LENARG),*) NSUB
+  IF (NSUB < 1) NSUB = 1
+END IF
+
 ! --- Compute substep dt ---
 
 ZTSPHY_SUB = GLOBAL_STATE%PTSPHY / REAL(NSTEPS, JPRB)
+ZTSPHY_INNER = ZTSPHY_SUB / REAL(NSUB, JPRB)
 
 IF (IRANK == 0) THEN
   WRITE(0,'(1X,A)')           '============================================'
@@ -104,8 +116,10 @@ IF (IRANK == 0) THEN
   WRITE(0,'(1X,A,I0)')        '  NGPTOTG  = ', NGPTOTG
   WRITE(0,'(1X,A,I0)')        '  NPROMA   = ', NPROMA
   WRITE(0,'(1X,A,I0)')        '  NSTEPS   = ', NSTEPS
+  WRITE(0,'(1X,A,I0)')        '  NSUB     = ', NSUB
   WRITE(0,'(1X,A,ES12.5)')    '  PTSPHY   = ', GLOBAL_STATE%PTSPHY
   WRITE(0,'(1X,A,ES12.5)')    '  dt_sub   = ', ZTSPHY_SUB
+  WRITE(0,'(1X,A,ES12.5)')    '  dt_inner = ', ZTSPHY_INNER
 #ifdef HALF
   WRITE(0,'(1X,A)')           '  Precision: FP16 (HALF)'
 #elif defined(SINGLE)
@@ -128,11 +142,23 @@ IF (IRANK == 0) THEN
 #else
   PRECISION_TAG = 'fp64'
 #endif
-  WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.h5'
+  IF (NSUB == 1) THEN
+    WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') &
+      & 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.h5'
+  ELSE
+    WRITE(OUT_FILENAME, '(A,A,A,I0,A,I0,A,I0,A,I0,A)') &
+      & 'cloudsc_output_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev_nsub', NSUB, '.h5'
+  END IF
   CALL CLOUDSC_OUTPUT_OPEN(TRIM(OUT_FILENAME))
 
   ! Open timing CSV (one row per step + summary)
-  WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.csv'
+  IF (NSUB == 1) THEN
+    WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A,I0,A)') &
+      & 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev.csv'
+  ELSE
+    WRITE(TIMING_FILENAME, '(A,A,A,I0,A,I0,A,I0,A,I0,A)') &
+      & 'cloudsc_timing_', TRIM(PRECISION_TAG), '_', NSTEPS, 'steps_', NGPTOTG, 'col_', GLOBAL_STATE%KLEV, 'lev_nsub', NSUB, '.csv'
+  END IF
   OPEN(UNIT=IOTIMING, FILE=TRIM(TIMING_FILENAME), STATUS='REPLACE', ACTION='WRITE')
   WRITE(IOTIMING, '(A)') 'step,wall_ms,kernel_ms,update_ms,d2h_ms'
 
@@ -211,7 +237,7 @@ END IF
 IF (IRANK == 0) WRITE(0,'(1X,A)') '  Warmup kernel call (discarded)...'
 CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
      & NGPTOT, GLOBAL_STATE%NBLOCKS, NGPTOTG, &
-     & GLOBAL_STATE%KFLDX, ZTSPHY_SUB, &
+     & GLOBAL_STATE%KFLDX, ZTSPHY_INNER, &
      & GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
      & GLOBAL_STATE%B_CML,   GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC, &
      & GLOBAL_STATE%PVFA,    GLOBAL_STATE%PVFL,  GLOBAL_STATE%PVFI, &
@@ -244,70 +270,74 @@ DO JSTEP = 1, NSTEPS
 
   CALL SYSTEM_CLOCK(ICLOCK_STEP)
 
-  ! Call the kernel — all arrays are already present on device
-  CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
-       & NGPTOT, GLOBAL_STATE%NBLOCKS, NGPTOTG, &
-       & GLOBAL_STATE%KFLDX, ZTSPHY_SUB, &
-       & GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
-       & GLOBAL_STATE%B_CML,   GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC, &
-       & GLOBAL_STATE%PVFA,    GLOBAL_STATE%PVFL,  GLOBAL_STATE%PVFI, &
-       & GLOBAL_STATE%PDYNA,   GLOBAL_STATE%PDYNL, GLOBAL_STATE%PDYNI, &
-       & GLOBAL_STATE%PHRSW,   GLOBAL_STATE%PHRLW, &
-       & GLOBAL_STATE%PVERVEL, GLOBAL_STATE%PAP,   GLOBAL_STATE%PAPH, &
-       & GLOBAL_STATE%PLSM,    GLOBAL_STATE%LDCUM, GLOBAL_STATE%KTYPE, &
-       & GLOBAL_STATE%PLU,     GLOBAL_STATE%PLUDE, GLOBAL_STATE%PSNDE, &
-       & GLOBAL_STATE%PMFU,    GLOBAL_STATE%PMFD, &
-       & GLOBAL_STATE%PA, &
-       & GLOBAL_STATE%PCLV,    GLOBAL_STATE%PSUPSAT,&
-       & GLOBAL_STATE%PLCRIT_AER, GLOBAL_STATE%PICRIT_AER, GLOBAL_STATE%PRE_ICE, &
-       & GLOBAL_STATE%PCCN,     GLOBAL_STATE%PNICE,&
-       & GLOBAL_STATE%PCOVPTOT, GLOBAL_STATE%PRAINFRAC_TOPRFZ, &
-       & GLOBAL_STATE%PFSQLF,   GLOBAL_STATE%PFSQIF ,  GLOBAL_STATE%PFCQNNG,  GLOBAL_STATE%PFCQLNG, &
-       & GLOBAL_STATE%PFSQRF,   GLOBAL_STATE%PFSQSF ,  GLOBAL_STATE%PFCQRNG,  GLOBAL_STATE%PFCQSNG, &
-       & GLOBAL_STATE%PFSQLTUR, GLOBAL_STATE%PFSQITUR, &
-       & GLOBAL_STATE%PFPLSL,   GLOBAL_STATE%PFPLSN,   GLOBAL_STATE%PFHPSL,   GLOBAL_STATE%PFHPSN &
-       & )
+  ! Inner sub-substep loop: NSUB kernel calls per outer step
+  DO JSUB = 1, NSUB
 
-  !$acc wait
-  CALL SYSTEM_CLOCK(ICLOCK_AUX)
-  ZTIME_KERNEL = REAL(ICLOCK_AUX - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
+    ! Call the kernel — all arrays are already present on device
+    CALL CLOUDSC_DRIVER_GPU_SCC_K_CACHING(NUMOMP, NPROMA, GLOBAL_STATE%KLEV, &
+         & NGPTOT, GLOBAL_STATE%NBLOCKS, NGPTOTG, &
+         & GLOBAL_STATE%KFLDX, ZTSPHY_INNER, &
+         & GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
+         & GLOBAL_STATE%B_CML,   GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC, &
+         & GLOBAL_STATE%PVFA,    GLOBAL_STATE%PVFL,  GLOBAL_STATE%PVFI, &
+         & GLOBAL_STATE%PDYNA,   GLOBAL_STATE%PDYNL, GLOBAL_STATE%PDYNI, &
+         & GLOBAL_STATE%PHRSW,   GLOBAL_STATE%PHRLW, &
+         & GLOBAL_STATE%PVERVEL, GLOBAL_STATE%PAP,   GLOBAL_STATE%PAPH, &
+         & GLOBAL_STATE%PLSM,    GLOBAL_STATE%LDCUM, GLOBAL_STATE%KTYPE, &
+         & GLOBAL_STATE%PLU,     GLOBAL_STATE%PLUDE, GLOBAL_STATE%PSNDE, &
+         & GLOBAL_STATE%PMFU,    GLOBAL_STATE%PMFD, &
+         & GLOBAL_STATE%PA, &
+         & GLOBAL_STATE%PCLV,    GLOBAL_STATE%PSUPSAT,&
+         & GLOBAL_STATE%PLCRIT_AER, GLOBAL_STATE%PICRIT_AER, GLOBAL_STATE%PRE_ICE, &
+         & GLOBAL_STATE%PCCN,     GLOBAL_STATE%PNICE,&
+         & GLOBAL_STATE%PCOVPTOT, GLOBAL_STATE%PRAINFRAC_TOPRFZ, &
+         & GLOBAL_STATE%PFSQLF,   GLOBAL_STATE%PFSQIF ,  GLOBAL_STATE%PFCQNNG,  GLOBAL_STATE%PFCQLNG, &
+         & GLOBAL_STATE%PFSQRF,   GLOBAL_STATE%PFSQSF ,  GLOBAL_STATE%PFCQRNG,  GLOBAL_STATE%PFCQSNG, &
+         & GLOBAL_STATE%PFSQLTUR, GLOBAL_STATE%PFSQITUR, &
+         & GLOBAL_STATE%PFPLSL,   GLOBAL_STATE%PFPLSN,   GLOBAL_STATE%PFHPSL,   GLOBAL_STATE%PFHPSN &
+         & )
 
-  ! Apply tendencies: forward Euler state update (CPU-side)
-  ! B_LOC layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
-  !$acc update host(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, GLOBAL_STATE%PA, &
-  !$acc   GLOBAL_STATE%PCLV, GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC)
-  DO JB = 1, GLOBAL_STATE%NBLOCKS
-    DO JK = 1, GLOBAL_STATE%KLEV
-      DO JL = 1, NPROMA
-        GLOBAL_STATE%PT(JL, JK, JB) = GLOBAL_STATE%PT(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 1, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 1, JB))
-        GLOBAL_STATE%PQ(JL, JK, JB) = GLOBAL_STATE%PQ(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 3, JB))
-        GLOBAL_STATE%PA(JL, JK, JB) = GLOBAL_STATE%PA(JL, JK, JB) &
-          & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 2, JB) &
-          &               + GLOBAL_STATE%B_LOC(JL, JK, 2, JB))
-        DO JM = 1, NCLV
-          GLOBAL_STATE%PCLV(JL, JK, JM, JB) = GLOBAL_STATE%PCLV(JL, JK, JM, JB) &
-            & + ZTSPHY_SUB * (GLOBAL_STATE%B_TMP(JL, JK, 3+JM, JB) &
-            &               + GLOBAL_STATE%B_LOC(JL, JK, 3+JM, JB))
+    !$acc wait
+
+    ! Apply tendencies: forward Euler state update (CPU-side)
+    ! B_LOC layout: index 1=T, 2=A, 3=Q, 4:(3+NCLV)=CLD
+    !$acc update host(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, GLOBAL_STATE%PA, &
+    !$acc   GLOBAL_STATE%PCLV, GLOBAL_STATE%B_TMP, GLOBAL_STATE%B_LOC)
+    DO JB = 1, GLOBAL_STATE%NBLOCKS
+      DO JK = 1, GLOBAL_STATE%KLEV
+        DO JL = 1, NPROMA
+          GLOBAL_STATE%PT(JL, JK, JB) = GLOBAL_STATE%PT(JL, JK, JB) &
+            & + ZTSPHY_INNER * (GLOBAL_STATE%B_TMP(JL, JK, 1, JB) &
+            &                 + GLOBAL_STATE%B_LOC(JL, JK, 1, JB))
+          GLOBAL_STATE%PQ(JL, JK, JB) = GLOBAL_STATE%PQ(JL, JK, JB) &
+            & + ZTSPHY_INNER * (GLOBAL_STATE%B_TMP(JL, JK, 3, JB) &
+            &                 + GLOBAL_STATE%B_LOC(JL, JK, 3, JB))
+          GLOBAL_STATE%PA(JL, JK, JB) = GLOBAL_STATE%PA(JL, JK, JB) &
+            & + ZTSPHY_INNER * (GLOBAL_STATE%B_TMP(JL, JK, 2, JB) &
+            &                 + GLOBAL_STATE%B_LOC(JL, JK, 2, JB))
+          DO JM = 1, NCLV
+            GLOBAL_STATE%PCLV(JL, JK, JM, JB) = GLOBAL_STATE%PCLV(JL, JK, JM, JB) &
+              & + ZTSPHY_INNER * (GLOBAL_STATE%B_TMP(JL, JK, 3+JM, JB) &
+              &                 + GLOBAL_STATE%B_LOC(JL, JK, 3+JM, JB))
+          END DO
         END DO
       END DO
     END DO
-  END DO
-  !$acc update device(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
-  !$acc   GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
+    !$acc update device(GLOBAL_STATE%PT, GLOBAL_STATE%PQ, &
+    !$acc   GLOBAL_STATE%PA, GLOBAL_STATE%PCLV)
 
-  ! Zero B_LOC for next kernel call
-  IF (JSTEP < NSTEPS) THEN
-    GLOBAL_STATE%B_LOC(:,:,:,:) = 0.0_JPRB
-    !$acc update device(GLOBAL_STATE%B_LOC)
-  END IF
+    ! Zero B_LOC for next kernel call (skip after very last sub-substep of last outer step)
+    IF (JSUB < NSUB .OR. JSTEP < NSTEPS) THEN
+      GLOBAL_STATE%B_LOC(:,:,:,:) = 0.0_JPRB
+      !$acc update device(GLOBAL_STATE%B_LOC)
+    END IF
 
-  !$acc wait
-  CALL SYSTEM_CLOCK(ICLOCK_END)
-  ZTIME_UPDATE = REAL(ICLOCK_END - ICLOCK_AUX, JPRD) / REAL(ICLOCK_RATE, JPRD)
+  END DO  ! JSUB
+
+  CALL SYSTEM_CLOCK(ICLOCK_AUX)
+  ! kernel+update time covers all NSUB sub-substeps
+  ZTIME_KERNEL = REAL(ICLOCK_AUX - ICLOCK_STEP, JPRD) / REAL(ICLOCK_RATE, JPRD)
+  ZTIME_UPDATE = 0.0_JPRD  ! lumped into kernel time when NSUB>1
 
   ! NaN/Inf check — compile with -DNAN_CHECK to enable
 #ifdef NAN_CHECK

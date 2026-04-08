@@ -16,23 +16,23 @@ export CUDA_VISIBLE_DEVICES=0
 # Run CLOUDSC GPU SCC k-caching at multiple precisions and timestep counts.
 # Produces HDF5 output files in build/ for later comparison.
 #
-# Usage: sbatch run_all.sh [NSTEPS] [NPROMA] [TPHYS]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0
+# Usage: sbatch run_all.sh [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
 # Runs at 1x, 2x, 4x of base grid (163840 columns)
+# Temporal refinement: NSUB_COARSE vs NSUB_FINE, same NSTEPS
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 NSTEPS=${1:-10}
 NPROMA=${2:-128}
 TPHYS=${3:-900.0}
+NSUB_COARSE=${4:-1}
+NSUB_FINE=${5:-2}
 
 # Grid sizes: 1x, 2x, 4x of the base column count
 # 4x at FP64 ≈ 50 GB, fits in 96 GB GH200 HBM3
 NGPTOTG_BASE=163840
 GRID_MULTIPLIERS=(1 2 4)
-
-# Derived step counts
-NSTEPS_FINE=$((NSTEPS * 2))
 
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 
@@ -40,8 +40,8 @@ echo "============================================"
 echo "  CLOUDSC multi-run comparison"
 echo "  Base NGPTOTG=${NGPTOTG_BASE}  multipliers=${GRID_MULTIPLIERS[*]}"
 echo "  NPROMA=${NPROMA}  TPHYS=${TPHYS}"
-echo "  Substeps: ${NSTEPS}, ${NSTEPS_FINE} (FP64)"
-echo "            ${NSTEPS} (FP32, FP16)"
+echo "  NSTEPS=${NSTEPS}  NSUB=${NSUB_COARSE} vs ${NSUB_FINE}"
+echo "  Temporal refinement: NSUB=${NSUB_COARSE} vs NSUB=${NSUB_FINE}"
 echo "============================================"
 
 cd ${SCRIPT_DIR}/build
@@ -59,12 +59,6 @@ if [ -f ${BINARY}.fp16 ]; then
 else
   echo "NOTE: ${BINARY}.fp16 not found — skipping FP16 runs"
 fi
-HAVE_FP16R=0
-if [ -f ${BINARY}.fp16r ]; then
-  HAVE_FP16R=1
-else
-  echo "NOTE: ${BINARY}.fp16r not found — skipping FP16r runs"
-fi
 
 # Check data
 for f in input.h5 reference.h5; do
@@ -80,13 +74,23 @@ run_config() {
   local LABEL=$1
   local BIN_EXT=$2
   local STEPS=$3
+  local NSUB=${4:-1}
 
   echo ""
   echo ">>> Running ${LABEL}..."
-  ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS}
+  ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
 
   # Precision tag matches the binary extension (fp64/fp32/fp16)
-  local OUTFILE="cloudsc_output_${BIN_EXT}_${STEPS}steps_${NGPTOTG}col.h5"
+  # Filename depends on NSUB: _nsubN suffix when NSUB>1
+  local BASE="cloudsc_output_${BIN_EXT}_${STEPS}steps_${NGPTOTG}col"
+  local OUTFILE
+  if [ "${NSUB}" -gt 1 ]; then
+    OUTFILE="${BASE}_137lev_nsub${NSUB}.h5"
+    [ -f "${OUTFILE}" ] || OUTFILE="${BASE}_nsub${NSUB}.h5"
+  else
+    OUTFILE="${BASE}_137lev.h5"
+    [ -f "${OUTFILE}" ] || OUTFILE="${BASE}.h5"
+  fi
 
   if [ ! -f ${OUTFILE} ]; then
     echo "FATAL: ${OUTFILE} not produced" >&2
@@ -102,15 +106,12 @@ for MULT in "${GRID_MULTIPLIERS[@]}"; do
   echo "  Grid ${MULT}x: NGPTOTG=${NGPTOTG}"
   echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
 
-  run_config "FP64 baseline (${NSTEPS} steps, ${MULT}x)" fp64 ${NSTEPS}
-  run_config "FP64 fine (${NSTEPS_FINE} steps, ${MULT}x)" fp64 ${NSTEPS_FINE}
-  run_config "FP32 (${NSTEPS} steps, ${MULT}x)" fp32 ${NSTEPS}
+  run_config "FP64 coarse (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_COARSE}
+  run_config "FP64 fine (${NSTEPS} steps, nsub=${NSUB_FINE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_FINE}
+  run_config "FP32 (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp32 ${NSTEPS} ${NSUB_COARSE}
 
   if [ ${HAVE_FP16} -eq 1 ]; then
-    run_config "FP16 (${NSTEPS} steps, ${MULT}x)" fp16 ${NSTEPS}
-  fi
-  if [ ${HAVE_FP16R} -eq 1 ]; then
-    run_config "FP16r (${NSTEPS} steps, ${MULT}x)" fp16r ${NSTEPS}
+    run_config "FP16 (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp16 ${NSTEPS} ${NSUB_COARSE}
   fi
 done
 
@@ -138,12 +139,16 @@ if [ ! -f input_2xklev.h5 ]; then
 fi
 
 echo ""
-echo ">>> Running spatial coarse (KLEV=137, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
-${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS}
+echo ">>> Running spatial coarse (KLEV=137, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
 
 echo ""
-echo ">>> Running spatial fine (KLEV=274, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
-CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS}
+echo ">>> Running spatial fine (KLEV=274, nsub=1, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 1
+
+echo ""
+echo ">>> Running spatial fine + temporal fine (KLEV=274, nsub=2, TPHYS=${SPATIAL_TPHYS}, ${SPATIAL_NGPTOTG} cols)..."
+CLOUDSC_INPUT=input_2xklev ${BINARY}.fp64 1 ${SPATIAL_NGPTOTG} ${NPROMA} ${NSTEPS} ${SPATIAL_TPHYS} 2
 
 echo ""
 echo "============================================"
