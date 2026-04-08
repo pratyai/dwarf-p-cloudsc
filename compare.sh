@@ -155,8 +155,8 @@ for MULT in "${GRID_MULTIPLIERS[@]}"; do
 done
 
 # --- Spatial refinement ---
-# Config 1: KLEV=137, nsub=1 (coarse baseline)
-COARSE=$(outfile fp64 ${NSTEPS} ${SPATIAL_NGPTOTG} ${NSUB_COARSE})
+# Config 1: KLEV=137, nsub=1 (coarse baseline — always nsub=1)
+COARSE=$(outfile fp64 ${NSTEPS} ${SPATIAL_NGPTOTG} 1)
 
 # Config 2: KLEV=274, nsub=1 (spatial only)
 FINE_274="${BUILD}/cloudsc_output_fp64_${NSTEPS}steps_${SPATIAL_NGPTOTG}col_274lev.h5"

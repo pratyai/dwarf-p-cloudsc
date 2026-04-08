@@ -16,19 +16,25 @@ export CUDA_VISIBLE_DEVICES=0
 # Run CLOUDSC GPU SCC k-caching at multiple precisions and timestep counts.
 # Produces HDF5 output files in build/ for later comparison.
 #
-# Usage: sbatch run_all.sh [--skip-existing] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+# Usage: sbatch run_all.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
 # Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
 # Runs at 1x, 2x, 4x of base grid (163840 columns)
 # Temporal refinement: NSUB_COARSE vs NSUB_FINE, same NSTEPS
 # Pass --skip-existing to skip runs whose output files already exist.
+# Pass --spinup N to run N FP64 spinup steps and use the spun-up state
+# as initial condition for all grid-loop runs (eliminates IFS spinup transient).
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 SKIP_EXISTING=0
-if [ "${1:-}" = "--skip-existing" ]; then
-  SKIP_EXISTING=1
-  shift
-fi
+SPINUP=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-existing) SKIP_EXISTING=1; shift ;;
+    --spinup) SPINUP=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 
 NSTEPS=${1:-10}
 NPROMA=${2:-128}
@@ -49,6 +55,9 @@ echo "  Base NGPTOTG=${NGPTOTG_BASE}  multipliers=${GRID_MULTIPLIERS[*]}"
 echo "  NPROMA=${NPROMA}  TPHYS=${TPHYS}"
 echo "  NSTEPS=${NSTEPS}  NSUB=${NSUB_COARSE} vs ${NSUB_FINE}"
 echo "  Temporal refinement: NSUB=${NSUB_COARSE} vs NSUB=${NSUB_FINE}"
+if [ ${SPINUP} -gt 0 ]; then
+  echo "  Spinup: ${SPINUP} FP64 steps before measurement"
+fi
 echo "============================================"
 
 cd ${SCRIPT_DIR}/build
@@ -74,6 +83,55 @@ for f in input.h5 reference.h5; do
     exit 1
   fi
 done
+
+# Activate venv (needed for make_spunup_input.py and vertical_refine.py)
+source "${SCRIPT_DIR}/venv/bin/activate"
+
+# --- Spinup phase ---
+# Run a short FP64 simulation to move the state off the IFS analysis onto
+# the forward-Euler attractor.  All grid-loop runs then start from this
+# spun-up state, eliminating the step-1 transient.
+CLOUDSC_INPUT_ENV=""
+if [ ${SPINUP} -gt 0 ]; then
+  SPUNUP_INPUT="${SCRIPT_DIR}/config-files/input_spunup.h5"
+
+  if [ ${SKIP_EXISTING} -eq 1 ] && [ -f "${SPUNUP_INPUT}" ]; then
+    echo ""
+    echo ">>> Skipping spinup (${SPUNUP_INPUT} exists)"
+  else
+    echo ""
+    echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+    echo "  Spinup: ${SPINUP} FP64 steps (nsub=${NSUB_COARSE})"
+    echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+    ${BINARY}.fp64 1 ${NGPTOTG_BASE} ${NPROMA} ${SPINUP} ${TPHYS} ${NSUB_COARSE}
+
+    # Find the spinup output file
+    SPINUP_OUT="cloudsc_output_fp64_${SPINUP}steps_${NGPTOTG_BASE}col_137lev"
+    if [ ${NSUB_COARSE} -gt 1 ]; then
+      SPINUP_OUT="${SPINUP_OUT}_nsub${NSUB_COARSE}"
+    fi
+    SPINUP_OUT="${SPINUP_OUT}.h5"
+
+    if [ ! -f "${SPINUP_OUT}" ]; then
+      echo "FATAL: spinup output ${SPINUP_OUT} not produced" >&2
+      exit 1
+    fi
+
+    echo ">>> Extracting spun-up state from step ${SPINUP}..."
+    python "${SCRIPT_DIR}/make_spunup_input.py" \
+      --input "${SCRIPT_DIR}/config-files/input.h5" \
+      --output "${SPINUP_OUT}" \
+      --step "${SPINUP}" \
+      --out "${SPUNUP_INPUT}"
+  fi
+
+  # Symlink into build/ so CLOUDSC_INPUT works
+  if [ ! -f input_spunup.h5 ]; then
+    ln -sf "${SPUNUP_INPUT}" input_spunup.h5
+  fi
+  CLOUDSC_INPUT_ENV="CLOUDSC_INPUT=input_spunup"
+  echo ">>> All grid-loop runs will use spun-up input"
+fi
 
 # --- Run all configurations ---
 
@@ -102,7 +160,11 @@ run_config() {
 
   echo ""
   echo ">>> Running ${LABEL}..."
-  ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
+  if [ -n "${CLOUDSC_INPUT_ENV}" ]; then
+    env ${CLOUDSC_INPUT_ENV} ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
+  else
+    ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
+  fi
 
   # Re-check after run
   if [ "${NSUB}" -gt 1 ]; then
@@ -145,9 +207,6 @@ echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
 SPATIAL_NGPTOTG=40960
 SPATIAL_TPHYS=120.0
 export NV_ACC_CUDA_STACKSIZE=131072
-
-# Activate venv for vertical_refine.py
-source "${SCRIPT_DIR}/venv/bin/activate"
 
 # Generate refined input if needed
 INPUT_2X="${SCRIPT_DIR}/config-files/input_2xklev.h5"
