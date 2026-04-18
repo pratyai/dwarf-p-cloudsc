@@ -12,7 +12,7 @@ spack env activate cloudsc-gpu
 # Python venv (one-time)
 uv venv --python 3.12 venv
 source venv/bin/activate
-uv pip install h5py polars numpy
+uv pip install h5py polars numpy matplotlib
 ```
 
 ## 1. Build all precision variants
@@ -21,49 +21,46 @@ uv pip install h5py polars numpy
 ./build_all.sh
 ```
 
-Builds FP16, FP16r, FP32, FP64 binaries under `build/bin/`. Also extracts
-SASS dumps to `ptx/{fp64,fp32,fp16,fp16r}/cloudsc.sass`.
+Builds FP16, FP32, FP64 binaries under `build/bin/`. Also extracts
+SASS dumps to `ptx/{fp64,fp32,fp16}/cloudsc.sass`.
 
-Binary: `build/bin/dwarf-cloudsc-gpu-scc-k-caching-multistep.{fp64,fp32,fp16,fp16r}`
+Binary: `build/bin/dwarf-cloudsc-gpu-scc-k-caching-multistep.{fp64,fp32,fp16}`
+
+Note: `build_all.sh` preserves any existing `.h5`/`.csv` output files
+across `--clean` rebuilds.
 
 ## 2. Run all configurations
 
 ```bash
-sbatch run_all.sh [NSTEPS] [NPROMA] [TPHYS]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0
+sbatch run_all.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+# Defaults: NSTEPS=10, NPROMA=128, TPHYS=120.0, NSUB_COARSE=1, NSUB_FINE=2
 ```
+
+Flags:
+- `--skip-existing` — skip runs whose output files already exist
+- `--spinup N` — run N FP64 warmup steps to move the state off the IFS
+  analysis onto the forward-Euler attractor (eliminates step-1 transient).
+  Creates `config-files/input_spunup.h5` via `make_spunup_input.py`.
 
 Runs each precision at 3 grid sizes (1x, 2x, 4x of 163840 columns), plus
-FP64 at 2x timesteps for temporal refinement. At the end, runs the spatial
-refinement pair (KLEV=137 vs KLEV=274, FP64, TPHYS=120, 40960 columns).
+temporal refinement (NSUB_COARSE vs NSUB_FINE at same NSTEPS). Then runs
+3 spatial refinement configs (KLEV=137 nsub=1, KLEV=274 nsub=1, KLEV=274
+nsub=2) at TPHYS=120, 40960 columns.
 
 Outputs land in `build/`:
-- `cloudsc_output_{prec}_{N}steps_{G}col_{K}lev.h5`
-- `cloudsc_timing_{prec}_{N}steps_{G}col_{K}lev.csv`
-
-### Spatial refinement standalone (optional)
-
-If you only want to rerun the spatial part:
-
-```bash
-sbatch run_spatial_refine.sh [NSTEPS] [NPROMA] [TPHYS] [NGPTOTG]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NGPTOTG=163840
-```
-
-This generates `input_2xklev.h5` if missing, runs coarse + fine, restricts,
-compares, and appends to `cloudsc_results.db`.
+- `cloudsc_output_{prec}_{N}steps_{G}col_{K}lev[_nsubM].h5`
+- `cloudsc_timing_{prec}_{N}steps_{G}col_{K}lev[_nsubM].csv`
 
 ## 3. Compare and report
 
 ```bash
-sbatch compare.sh [NPROMA]
-# Default: NPROMA=128
+./compare.sh [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
+# Same defaults as run_all.sh
 ```
 
-Auto-discovers all output files, ingests timing CSVs, runs all
-precision/temporal comparisons in parallel, and also handles spatial
-refinement (restricts 274-level outputs, compares against 137-level).
-Results go into `cloudsc_results.db`. Calls `report.py` at the end.
+Takes the same positional args as `run_all.sh`. Ingests timing CSVs, runs
+precision/temporal/spatial comparisons in parallel, and writes results to
+`cloudsc_results.db`. Calls `report.py` at the end.
 
 ### Report only (no recomputation)
 
@@ -75,7 +72,14 @@ Results go into `cloudsc_results.db`. Calls `report.py` at the end.
 ./report.sh -q "SELECT ..."    # arbitrary SQL query
 ```
 
-## 4. SASS instruction analysis
+## 4. Plots
+
+```bash
+python plot_snr.py             # SNR evolution per field/grid → figs/snr_evolution.pdf
+python plot_timing.py          # kernel timing plots → figs/timing.pdf
+```
+
+## 5. SASS instruction analysis
 
 ```bash
 ./sass_stats.sh [ptx]
@@ -84,20 +88,76 @@ Results go into `cloudsc_results.db`. Calls `report.py` at the end.
 Prints instruction mix table (FP64/FP32/FP16 arithmetic, MUFU special
 functions, F2F format conversions, total instructions) per precision.
 
+## 6. GPU profiling (ncu)
+
+```bash
+sbatch profile_all.sh [NSTEPS] [NPROMA] [TPHYS]
+# Defaults: NSTEPS=2, NPROMA=128, TPHYS=120.0
+```
+
+Profiles all precisions at 3 grid sizes with Nsight Compute. Reports
+go to `profile/cloudsc.{fp64,fp32,fp16}.{1x,2x,4x}.ncu-rep`.
+
+## 7. Querying the results database
+
+All results live in `cloudsc_results.db`. Useful queries:
+
+```bash
+# List all comparisons
+sqlite3 cloudsc_results.db "SELECT id, label, ngptotg FROM comparisons"
+
+# Per-field SNR at a specific step (e.g. p=2) for FP32
+sqlite3 cloudsc_results.db "
+  SELECT s.variable, ROUND(s.var_snr_db, 1) AS snr
+  FROM step_stats s JOIN comparisons c ON s.comparison_id = c.id
+  WHERE c.label = 'precision_fp64vs32_10steps_163840col' AND s.step = 2
+  ORDER BY s.variable"
+
+# SNR evolution (all steps) for a comparison
+sqlite3 cloudsc_results.db "
+  SELECT s.step, s.variable, ROUND(s.var_snr_db, 1) AS snr
+  FROM step_stats s JOIN comparisons c ON s.comparison_id = c.id
+  WHERE c.label = 'precision_fp64vs32_10steps_163840col' AND s.step >= 1
+  ORDER BY s.variable, s.step"
+
+# Temporal discretization noise floor
+sqlite3 cloudsc_results.db "
+  SELECT s.variable, ROUND(s.var_snr_db, 1) AS snr
+  FROM step_stats s JOIN comparisons c ON s.comparison_id = c.id
+  WHERE c.label = 'temporal_refine_nsub1vs2_10steps_163840col' AND s.step = 2
+  ORDER BY s.variable"
+
+# Spatial discretization noise floor
+sqlite3 cloudsc_results.db "
+  SELECT s.variable, ROUND(s.var_snr_db, 1) AS snr
+  FROM step_stats s JOIN comparisons c ON s.comparison_id = c.id
+  WHERE c.label = 'spatial_refine_klev137vs274_40960col' AND s.step = 2
+  ORDER BY s.variable"
+
+# Kernel timing per step
+sqlite3 cloudsc_results.db "
+  SELECT step, precision, ROUND(kernel_ms, 2), ROUND(update_ms, 2)
+  FROM timing
+  WHERE ngptotg = 163840 AND step > 0
+  ORDER BY precision, step"
+```
+
 ## Key files
 
 | File | Purpose |
 |---|---|
-| `build_all.sh` | Build 4 precision binaries + extract SASS |
-| `run_all.sh` | Run all configs (precision, temporal, spatial) |
-| `run_spatial_refine.sh` | Standalone spatial refinement run |
+| `build_all.sh` | Build 3 precision binaries + extract SASS |
+| `run_all.sh` | Run all configs (precision, temporal, spatial, spinup) |
 | `compare.sh` | All comparisons + DB ingest + report |
 | `compare_precision.py` | Core comparison engine (HDF5 → SQLite) |
 | `report.py` | Read DB and print formatted tables |
 | `report.sh` | Convenience wrapper for report.py |
 | `vertical_refine.py` | `refine` (KLEV→2xKLEV) and `restrict` (2xKLEV→KLEV) |
+| `make_spunup_input.py` | Extract spun-up state from FP64 output → new input file |
+| `plot_snr.py` | SNR evolution plotter (multi-page PDF) |
+| `plot_timing.py` | Kernel timing plotter |
+| `profile_all.sh` | ncu profiling across grids and precisions |
 | `sass_stats.sh` | SASS instruction mix summary |
-| `latex_table.py` | Generate LaTeX tables from DB |
 | `cloudsc_results.db` | SQLite database with all results |
 
 ## Database schema
@@ -112,27 +172,34 @@ Variance SNR is the primary accuracy metric: `10*log10(var(ref) / var(ref-test))
 
 ## Important details
 
-- **TPHYS=900s** is the default (IFS T511 physics timestep). TCo1279 uses 450s.
-- **Spatial refinement uses TPHYS=120s** because KLEV=274 + TPHYS=900 diverges at step 9.
+- **TPHYS=120s** is the recommended timestep. TPHYS=900 causes odd/even
+  oscillation in SNR due to frozen B_TMP forcing, and KLEV=274 diverges
+  at TPHYS=900. TPHYS=120 gives clean monotonic decay.
+- **Spinup (--spinup 3)**: the IFS analysis initial condition is not on the
+  forward-Euler attractor, causing a step-1 transient. Running 3 FP64
+  spinup steps eliminates this. The spun-up state is saved to
+  `config-files/input_spunup.h5` and reused by all grid-loop runs.
+- **NSUB sub-substeps**: each outer step p is subdivided into NSUB kernel
+  calls with `dt_inner = dt_sub/NSUB`. Temporal refinement compares
+  NSUB_COARSE vs NSUB_FINE at the same NSTEPS, making each step's error
+  independent.
 - **NV_ACC_CUDA_STACKSIZE=131072** is required for KLEV=274 GPU runs.
-- **CLOUDSC_INPUT env var** selects the input file (without `.h5` extension). Default: `input`.
-  Set to `input_2xklev` for the refined 274-level input.
-- **`input_2xklev.h5`** is generated on-the-fly (not committed to git — too large).
-  It's created in `config-files/` and symlinked into `build/`.
-- Output filenames include KLEV: `cloudsc_output_fp64_10steps_163840col_137lev.h5`.
-  `compare.sh` skips non-137lev files for precision/temporal comparisons; spatial
-  comparisons are handled separately.
-- **Variance SNR vs Power SNR**: Power SNR is inflated for fields with large means
-  (PT ~232K gives a ~20dB artificial boost). Always use variance SNR.
+- **CLOUDSC_INPUT env var** selects the input file (without `.h5` extension).
+  Default: `input`. Set to `input_2xklev` for 274-level, `input_spunup`
+  for spun-up initial condition.
+- **Generated files** (not committed): `input_2xklev.h5`, `input_spunup.h5`,
+  `figs/`, `profile/`. All are regenerated by the scripts.
+- **Variance SNR vs Power SNR**: Power SNR is inflated for fields with large
+  means (PT ~232K gives a ~20dB artificial boost). Always use variance SNR.
 
 ## Quick full repro
 
 ```bash
-./build_all.sh                  # ~30 min
-sbatch run_all.sh               # ~20 min (includes spatial)
+./build_all.sh                                     # ~30 min
+sbatch run_all.sh --spinup 3 10 128 120.0 1 2      # ~20 min
 # wait for job to finish
-sbatch compare.sh               # ~5 min
-# wait for job to finish
-./report.sh                     # instant
-./sass_stats.sh                 # instant
+./compare.sh 10 128 120.0 1 2                      # ~5 min
+./report.sh                                        # instant
+python plot_snr.py                                 # instant
+./sass_stats.sh                                    # instant
 ```

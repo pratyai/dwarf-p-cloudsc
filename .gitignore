@@ -18,3 +18,13 @@ __pycache__/
 .python-version
 *.egg-info/
 *.mod
+
+# SC2026: generated data and outputs
+config-files/input_spunup.h5
+config-files/input_2xklev.h5
+input_spunup.h5
+figs/
+profile/
+*.ncu-rep
+build_stash/
+ptx/
