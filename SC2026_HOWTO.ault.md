@@ -10,7 +10,9 @@ CLOUDSC FP16 path is fragile and NVHPC 21.3 may ICE it.
 ### Spack (one-time)
 
 Spack and its packages repo live in two clones. Pick any location; the
-example below uses `$SCRATCH`.
+example below uses `$SCRATCH` (on ault this resolves to
+`/scratch/$USER` — plenty of space, but expect it to be scrubbed after
+long inactivity; don't keep unique work there).
 
 ```bash
 export SPACK_TREE=$SCRATCH/spack-tree

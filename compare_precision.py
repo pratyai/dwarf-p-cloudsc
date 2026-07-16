@@ -84,7 +84,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
 # ---------- Stats computation ----------
 
 def load_step(h5file: h5py.File, step: int, var: str) -> np.ndarray:
-    group = f"step_{step:04d}"
+    group = f"step_{step:08d}"
     return np.array(h5file[group][var], dtype=np.float64)
 
 
@@ -229,7 +229,7 @@ def do_compare(args):
     # Compute stats
     rows = []
     for ref_step, test_step in common:
-        ref_group = ref_h5[f"step_{ref_step:04d}"]
+        ref_group = ref_h5[f"step_{ref_step:08d}"]
         vars_available = [v for v in PROGNOSTIC_VARS if v in ref_group]
 
         for var in vars_available:

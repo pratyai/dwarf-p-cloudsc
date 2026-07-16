@@ -84,7 +84,7 @@ def main():
     # Open output and extract state
     with h5py.File(args.output, "r") as fout:
         if args.step is not None:
-            step_key = f"step_{args.step:04d}"
+            step_key = f"step_{args.step:08d}"
         else:
             step_key = find_last_step(fout)
         print(f"Extracting state from {step_key}")

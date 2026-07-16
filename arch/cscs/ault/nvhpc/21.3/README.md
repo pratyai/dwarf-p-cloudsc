@@ -12,9 +12,8 @@ A100 node (ault25) with NVHPC 21.3.
 
 ## 1. Spack setup (one-time)
 
-Two clones, spack proper + packages repo. Pick any location — `$SCRATCH`
-on ault (e.g. `/scratch/snx3000/$USER` or similar; check `echo $SCRATCH`)
-works.
+Two clones, spack proper + packages repo. Pick any location; `$SCRATCH`
+on ault resolves to `/scratch/$USER` and works fine.
 
 ```bash
 export SPACK_TREE=$SCRATCH/spack-tree
