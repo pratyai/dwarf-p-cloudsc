@@ -79,10 +79,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"     # add to shell rc too
 ```
 
-Then create the venv:
+Then create the venv. Use `--python-preference only-managed` so the venv's
+`python` symlinks to a uv-downloaded interpreter under
+`~/.local/share/uv/python/` (visible on compute nodes) instead of the
+frontend-only system python:
 
 ```bash
-uv venv --python 3.12 venv
+uv python install 3.12
+uv venv --python 3.12 --python-preference only-managed venv
 source venv/bin/activate
 uv pip install h5py polars numpy matplotlib
 ```
