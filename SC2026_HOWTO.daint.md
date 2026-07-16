@@ -109,7 +109,8 @@ across `--clean` rebuilds.
 
 ```bash
 sbatch run_all.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=120.0, NSUB_COARSE=1, NSUB_FINE=2
+# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
+# Paper canonical: pass 120.0 for TPHYS (see §7 quick full repro).
 ```
 
 Flags:

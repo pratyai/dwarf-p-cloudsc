@@ -93,8 +93,10 @@ uv pip install h5py polars numpy matplotlib
 ARCH=./arch/cscs/ault/nvhpc/23.3 ./build_all.sh
 ```
 
-Builds FP16/FP32/FP64 under `build/bin/`. FP16 may fail — proceed to
-FP64/FP32 only if that happens.
+Builds FP16/FP32/FP64 under `build/bin/`. FP16 build only succeeds with
+the 23.3 toolchain; the 21.3 fallback ICEs and dies before FP32/FP64,
+so use `set +e` around the build or drop `--half-precision` from
+`build_all.sh:91` if you're stuck on 21.3.
 
 Binary: `build/bin/dwarf-cloudsc-gpu-scc-k-caching-multistep.{fp64,fp32,fp16}`
 
@@ -106,7 +108,8 @@ Use the ault-header variant `run_all.ault.sh` (identical body to
 
 ```bash
 sbatch run_all.ault.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
-# Defaults: NSTEPS=10, NPROMA=128, TPHYS=120.0, NSUB_COARSE=1, NSUB_FINE=2
+# Defaults: NSTEPS=10, NPROMA=128, TPHYS=900.0, NSUB_COARSE=1, NSUB_FINE=2
+# Paper canonical: pass 120.0 for TPHYS (see quick partial repro).
 ```
 
 Flags:
@@ -147,7 +150,7 @@ script `profile_all.sh` needs its SBATCH block edited the same way as
 | Node runtime | `--uenv=icon/25.2:v1@santis --view=default` | none |
 | Partition | `-p debug` (30 min) / longer | `-p total` (4 h), `--nodelist=ault25` |
 | Account | `-A g34` | `-A g34` (kept for consistency) |
-| FP16 | supported (paper baseline) | best-effort |
+| FP16 | supported (paper baseline) | works on 23.3, broken on 21.3 |
 
 ## Troubleshooting
 
@@ -162,7 +165,7 @@ script `profile_all.sh` needs its SBATCH block edited the same way as
 
 ```bash
 ARCH=./arch/cscs/ault/nvhpc/23.3 ./build_all.sh          # ~30 min
-sbatch run_all.ault.sh --spinup 3 10 128 120.0 1 2       # ~20 min (only FP64/FP32 will be measured if FP16 build failed)
+sbatch run_all.ault.sh --spinup 3 10 128 120.0 1 2       # ~20 min
 ./compare.sh 10 128 120.0 1 2                            # ~5 min
 ./report.sh --perf-only
 ```
