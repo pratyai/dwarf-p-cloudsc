@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage: ./build_all.sh
 # Requires: spack env 'cloudsc-gpu' already installed
 
-ARCH=./arch/cscs/daint/nvhpc/25.1
+ARCH=${ARCH:-./arch/cscs/daint/nvhpc/25.1}
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 STASH_DIR=./build_stash
 

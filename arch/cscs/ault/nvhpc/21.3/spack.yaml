@@ -1,0 +1,35 @@
+spack:
+  specs:
+    - nvhpc@21.3
+    - "cmake@3.24:"
+    - "hdf5@1.12: +fortran +hl ~mpi %nvhpc@21.3"
+
+  concretizer:
+    unify: true
+    reuse: true
+
+  # Externals bind to the site-wide NVHPC module (`/opt/nvidia/hpc_sdk`)
+  # and the system gcc that spack uses as bootstrap compiler.
+  packages:
+    nvhpc:
+      externals:
+        - spec: nvhpc@21.3~blas~lapack~mpi
+          prefix: /opt/nvidia/hpc_sdk/Linux_x86_64/21.3/compilers
+          extra_attributes:
+            compilers:
+              c: /opt/nvidia/hpc_sdk/Linux_x86_64/21.3/compilers/bin/nvc
+              cxx: /opt/nvidia/hpc_sdk/Linux_x86_64/21.3/compilers/bin/nvc++
+              fortran: /opt/nvidia/hpc_sdk/Linux_x86_64/21.3/compilers/bin/nvfortran
+    cuda:
+      externals:
+        - spec: cuda@11.2.142
+          prefix: /opt/nvidia/hpc_sdk/Linux_x86_64/21.3/cuda
+    gcc:
+      externals:
+        - spec: gcc@8.5.0 languages:='c,c++,fortran'
+          prefix: /usr
+          extra_attributes:
+            compilers:
+              c: /usr/bin/gcc
+              cxx: /usr/bin/g++
+              fortran: /usr/bin/gfortran
