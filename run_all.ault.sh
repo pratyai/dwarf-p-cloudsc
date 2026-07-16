@@ -43,10 +43,9 @@ TPHYS=${3:-900.0}
 NSUB_COARSE=${4:-1}
 NSUB_FINE=${5:-2}
 
-# Grid sizes: 1x, 2x, 4x of the base column count
-# 4x at FP64 ≈ 50 GB, fits in 96 GB GH200 HBM3
+# Grid sizes: only 1x on ault A100 (40 GB HBM). 2x=327680 OOMs.
 NGPTOTG_BASE=163840
-GRID_MULTIPLIERS=(1 2 4)
+GRID_MULTIPLIERS=(1)
 
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 
