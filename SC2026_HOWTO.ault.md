@@ -1,9 +1,10 @@
 # CLOUDSC Precision Study — SC2026 Workflow (ault)
 
-Performance-focused runs on CSCS ault (A100 node `ault25`, NVHPC 21.3).
-Numerical results for the paper are produced on daint (GH200); see
-`SC2026_HOWTO.daint.md`. FP16 on this platform is best-effort — the
-CLOUDSC FP16 path is fragile and NVHPC 21.3 may ICE it.
+Performance-focused runs on CSCS ault (A100 node `ault25`). Numerical
+results for the paper are produced on daint (GH200); see
+`SC2026_HOWTO.daint.md`. Default toolchain is spack-installed NVHPC 23.3
+(FP16 works); the site NVHPC 21.3 install is offered as a shortcut but
+its LLVM rejects the FP16 kernel.
 
 ## Prerequisites
 
@@ -42,18 +43,36 @@ All subsequent commands assume you are in the `dwarf-p-cloudsc` directory.
 
 ### Cloudsc spack env (one-time)
 
-No uenv on ault. NVHPC lives at a fixed site path
-(`/opt/nvidia/hpc_sdk/Linux_x86_64/21.3/`), so plain login-shell spack is
-enough.
+No uenv on ault. Two arch dirs are shipped:
+
+- `arch/cscs/ault/nvhpc/23.3/` — spack installs NVHPC 23.3 from the
+  NVIDIA tarball (~4 GB fetch, ~1 h build). Handles FP16.
+- `arch/cscs/ault/nvhpc/21.3/` — binds to the site install at
+  `/opt/nvidia/hpc_sdk/Linux_x86_64/21.3/`. Instant setup, but its LLVM
+  rejects the FP16 kernel (`invalid cast opcode for cast from 'i16' to
+  'float'`), so FP32/FP64 only.
+
+Use 23.3 unless you have a reason not to. Substitute `21.3` in every
+command below if you want the shortcut.
 
 ```bash
-spack env create cloudsc-gpu ./arch/cscs/ault/nvhpc/21.3/spack.yaml
+spack env create cloudsc-gpu ./arch/cscs/ault/nvhpc/23.3/spack.yaml
 spack -e cloudsc-gpu concretize
-spack -e cloudsc-gpu install     # ~30 min first time
+spack -e cloudsc-gpu install     # ~1 h first time for 23.3, ~30 min for 21.3
 spack env activate cloudsc-gpu
 ```
 
 ### Python venv (one-time)
+
+Ault has no `uv` and no `module` for it; system python is 3.6.8, too old
+for the analysis scripts. Bootstrap uv first:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"     # add to shell rc too
+```
+
+Then create the venv:
 
 ```bash
 uv venv --python 3.12 venv
@@ -66,7 +85,7 @@ uv pip install h5py polars numpy matplotlib
 `build_all.sh` targets the daint arch by default. Override via env var:
 
 ```bash
-ARCH=./arch/cscs/ault/nvhpc/21.3 ./build_all.sh
+ARCH=./arch/cscs/ault/nvhpc/23.3 ./build_all.sh
 ```
 
 Builds FP16/FP32/FP64 under `build/bin/`. FP16 may fail — proceed to
@@ -130,8 +149,8 @@ script `profile_all.sh` needs its SBATCH block edited the same way as
 | Aspect | daint | ault |
 |---|---|---|
 | GPU | GH200 (cc90) | A100 (cc80) |
-| NVHPC | 25.1 (via spack + uenv externals) | 21.3 (site install at `/opt/nvidia`) |
-| CUDA | 12.6 (uenv) | 11.2 (bundled with NVHPC 21.3) |
+| NVHPC | 25.1 (via spack + uenv externals) | 23.3 (spack-built, default) / 21.3 (site) |
+| CUDA | 12.6 (uenv) | 12.0 (bundled with NVHPC 23.3) / 11.2 (with 21.3) |
 | Node runtime | `--uenv=icon/25.2:v1@santis --view=default` | none |
 | Partition | `-p debug` (30 min) / longer | `-p total` (4 h), `--nodelist=ault25` |
 | Account | `-A g34` | `-A g34` (kept for consistency) |
@@ -142,14 +161,14 @@ script `profile_all.sh` needs its SBATCH block edited the same way as
 | Problem | Fix |
 |---|---|
 | Only 1 A100 node in the partition — job pending | `sinfo -p total -w ault25`; wait for the node to free. |
-| `Corrupt or Old Module file hdf5.mod` | HDF5 built with wrong compiler. Recreate spack env; `spack.yaml` pins `%nvhpc@21.3`. |
+| `Corrupt or Old Module file hdf5.mod` | HDF5 built with wrong compiler. Recreate spack env; `spack.yaml` pins `%nvhpc@23.3` (or `@21.3`). |
 | FP16 build ICEs (`NVFORTRAN-F-0000 Internal compiler error`) | Known 21.3 limitation. Skip FP16; use `--single-precision` and FP64 only. |
 | `nvhpc external prefix does not exist` | Node doesn't have the NVHPC install mounted. Only `ault25` is guaranteed for GPU builds/runs. |
 
 ## Quick partial repro (perf only)
 
 ```bash
-ARCH=./arch/cscs/ault/nvhpc/21.3 ./build_all.sh          # ~30 min
+ARCH=./arch/cscs/ault/nvhpc/23.3 ./build_all.sh          # ~30 min
 sbatch run_all.ault.sh --spinup 3 10 128 120.0 1 2       # ~20 min (only FP64/FP32 will be measured if FP16 build failed)
 ./compare.sh 10 128 120.0 1 2                            # ~5 min
 ./report.sh --perf-only

@@ -72,6 +72,15 @@ inside a uenv shell is blocked with `libslurm-uenv-mount rc=-3000`).
 
 ### Python venv (one-time)
 
+Daint has no site-wide `uv`. Bootstrap it first:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"     # add to shell rc too
+```
+
+Then create the venv:
+
 ```bash
 uv venv --python 3.12 venv
 source venv/bin/activate
