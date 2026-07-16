@@ -1,15 +1,78 @@
 # CLOUDSC Precision Study — SC2026 Workflow
 
 How to reproduce the results for the SC2026 paper. Everything runs on
-CSCS Daint (GH200 nodes, NVHPC 24.7).
+CSCS Daint (GH200 nodes, NVHPC 25.1).
 
 ## Prerequisites
 
-```bash
-# Spack environment (one-time)
-spack env activate cloudsc-gpu
+### Spack (one-time)
 
-# Python venv (one-time)
+Spack and its packages repo live in two clones. Pick any location; the
+example below uses `$SCRATCH` (on CSCS Alps this resolves to
+`/capstor/scratch/cscs/$USER`, which is a purge-eligible fast tier — fine
+for spack trees, not for anything you want to keep long-term).
+
+```bash
+export SPACK_TREE=$SCRATCH/spack-tree
+mkdir -p $SPACK_TREE && cd $SPACK_TREE
+git clone --depth=1 https://github.com/spack/spack.git
+git clone --depth=1 https://github.com/spack/spack-packages.git
+
+source $SPACK_TREE/spack/share/spack/setup-env.sh
+spack repo remove builtin 2>/dev/null || true   # drop any stale user-scoped entry
+spack repo add $SPACK_TREE/spack-packages/repos/spack_repo/builtin
+```
+
+Add the `source` + `spack repo add` lines to your shell rc so future
+shells see them.
+
+### Clone this repo (one-time)
+
+Pick any location (e.g. `$SCRATCH`):
+
+```bash
+cd $SCRATCH
+git clone -b sc2026 https://github.com/pratyai/dwarf-p-cloudsc.git
+cd dwarf-p-cloudsc
+```
+
+All subsequent commands assume you are in the `dwarf-p-cloudsc` directory.
+
+### Cloudsc spack env (one-time)
+
+Externals in `arch/cscs/daint/nvhpc/25.1/spack.yaml` bind to paths under
+`/user-environment`, only mounted while the `icon/25.2:v1@santis` uenv
+is active. Every `spack` invocation that touches those externals
+(`concretize`, `install`) must therefore run inside a uenv shell.
+
+Enter one for the whole session:
+
+```bash
+uenv start --view=default icon/25.2:v1@santis
+```
+
+Then, from inside the uenv shell (prompt shows `(uenv)` or similar),
+re-source spack (uenv resets `PATH`) and create + build the env:
+
+```bash
+source $SPACK_TREE/spack/share/spack/setup-env.sh
+spack env create cloudsc-gpu ./arch/cscs/daint/nvhpc/25.1/spack.yaml
+spack -e cloudsc-gpu concretize
+spack -e cloudsc-gpu install     # ~30 min first time
+spack env activate cloudsc-gpu
+```
+
+You can leave the uenv shell with `exit`. For later shells that only
+need to *use* the already-built spack packages (no new install), the
+uenv is not strictly required — but activating it does no harm.
+
+For SLURM jobs, use `#SBATCH --uenv=icon/25.2:v1@santis` +
+`#SBATCH --view=default` in the script header (submitting `sbatch` from
+inside a uenv shell is blocked with `libslurm-uenv-mount rc=-3000`).
+
+### Python venv (one-time)
+
+```bash
 uv venv --python 3.12 venv
 source venv/bin/activate
 uv pip install h5py polars numpy matplotlib

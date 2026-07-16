@@ -1,7 +1,0 @@
-spack:
-  specs:
-    - nvhpc@24.7
-    - "cmake@3.24:"
-    - "hdf5@1.12: +fortran +hl ~mpi %nvhpc@24.7"
-  concretizer:
-    unify: true

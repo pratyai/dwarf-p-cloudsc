@@ -1,0 +1,36 @@
+spack:
+  specs:
+    - nvhpc@25.1
+    - "cmake@3.24:"
+    - "hdf5@1.12: +fortran +hl ~mpi %nvhpc@25.1"
+
+  concretizer:
+    unify: true
+    reuse: true
+
+  # Externals bind to the CSCS Alps `icon/25.2:v1@santis` uenv view.
+  # Every user on the system sees these paths when the uenv is active;
+  # no per-user paths belong here.
+  packages:
+    cuda:
+      externals:
+        - spec: cuda@12.6.20
+          prefix: /user-environment/env/default
+    nvhpc:
+      externals:
+        - spec: nvhpc@25.1~blas~lapack~mpi
+          prefix: /user-environment/linux-sles15-neoverse_v2/gcc-13.2.0/nvhpc-25.1-q44hwfxt5drpht62wudffmbe4g54kzpk/Linux_aarch64/25.1/compilers
+          extra_attributes:
+            compilers:
+              c: /user-environment/linux-sles15-neoverse_v2/gcc-13.2.0/nvhpc-25.1-q44hwfxt5drpht62wudffmbe4g54kzpk/Linux_aarch64/25.1/compilers/bin/nvc
+              cxx: /user-environment/linux-sles15-neoverse_v2/gcc-13.2.0/nvhpc-25.1-q44hwfxt5drpht62wudffmbe4g54kzpk/Linux_aarch64/25.1/compilers/bin/nvc++
+              fortran: /user-environment/linux-sles15-neoverse_v2/gcc-13.2.0/nvhpc-25.1-q44hwfxt5drpht62wudffmbe4g54kzpk/Linux_aarch64/25.1/compilers/bin/nvfortran
+    gcc:
+      externals:
+        - spec: gcc@13.2.0 languages:='c,c++,fortran'
+          prefix: /user-environment/linux-sles15-neoverse_v2/gcc-12.3.0/gcc-13.2.0-iyisbcrs7nsbhcwcncsk52zmo3zjf33i
+          extra_attributes:
+            compilers:
+              c: /user-environment/linux-sles15-neoverse_v2/gcc-12.3.0/gcc-13.2.0-iyisbcrs7nsbhcwcncsk52zmo3zjf33i/bin/gcc
+              cxx: /user-environment/linux-sles15-neoverse_v2/gcc-12.3.0/gcc-13.2.0-iyisbcrs7nsbhcwcncsk52zmo3zjf33i/bin/g++
+              fortran: /user-environment/linux-sles15-neoverse_v2/gcc-12.3.0/gcc-13.2.0-iyisbcrs7nsbhcwcncsk52zmo3zjf33i/bin/gfortran
