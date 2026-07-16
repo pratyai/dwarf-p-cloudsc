@@ -119,7 +119,7 @@ if [ ${SPINUP} -gt 0 ]; then
     fi
 
     echo ">>> Extracting spun-up state from step ${SPINUP}..."
-    python "${SCRIPT_DIR}/make_spunup_input.py" \
+    "${SCRIPT_DIR}/venv/bin/python" "${SCRIPT_DIR}/make_spunup_input.py" \
       --input "${SCRIPT_DIR}/config-files/input.h5" \
       --output "${SPINUP_OUT}" \
       --step "${SPINUP}" \
@@ -213,7 +213,7 @@ export NV_ACC_CUDA_STACKSIZE=131072
 INPUT_2X="${SCRIPT_DIR}/config-files/input_2xklev.h5"
 if [ ! -f "${INPUT_2X}" ]; then
   echo ">>> Generating 2xKLEV input..."
-  python "${SCRIPT_DIR}/vertical_refine.py" refine "${SCRIPT_DIR}/config-files/input.h5" "${INPUT_2X}"
+  "${SCRIPT_DIR}/venv/bin/python" "${SCRIPT_DIR}/vertical_refine.py" refine "${SCRIPT_DIR}/config-files/input.h5" "${INPUT_2X}"
 fi
 if [ ! -f input_2xklev.h5 ]; then
   ln -sf "${INPUT_2X}" input_2xklev.h5
