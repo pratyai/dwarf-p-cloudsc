@@ -57,7 +57,7 @@ CONTAINS
     IF (.NOT. OUT_IS_OPEN) RETURN
 
     ! Create group for this step
-    WRITE(GRP_NAME, '(A,I4.4)') 'step_', JSTEP
+    WRITE(GRP_NAME, '(A,I8.8)') 'step_', JSTEP
     CALL H5GCREATE_F(OUT_FILE_ID, TRIM(GRP_NAME), GRP_ID, IERR)
 
     ! Write 3D fields (NPROMA, NLEV, NBLOCKS)

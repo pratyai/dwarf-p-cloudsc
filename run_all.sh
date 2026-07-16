@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=cloudsc-runs
 #SBATCH --account=g34
+#SBATCH --uenv=icon/25.2:v1@santis
+#SBATCH --view=default
 #SBATCH --constraint=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1

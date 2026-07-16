@@ -91,14 +91,26 @@ def refine_input(src_path: str, dst_path: str, *, factor: int = 2):
     # Original level k -> new level 2k; inserted level -> 2k+1
     klev_new = factor * klev
     paph_new = np.empty((klev_new + 1, klon), dtype=np.float64)
-    for k in range(klev):
-        paph_new[2 * k, :] = paph_old[k, :]
-        # Geometric mean = exp(0.5*(log(a) + log(b))) for log-p linearity
-        paph_new[2 * k + 1, :] = np.sqrt(
-            np.maximum(paph_old[k, :], 1e-10) *
-            np.maximum(paph_old[k + 1, :], 1e-10)
-        )
-    paph_new[2 * klev, :] = paph_old[klev, :]
+    if factor == 2:
+        for k in range(klev):
+            paph_new[2 * k, :] = paph_old[k, :]
+            # Geometric mean = exp(0.5*(log(a) + log(b))) for log-p linearity
+            paph_new[2 * k + 1, :] = np.sqrt(
+                np.maximum(paph_old[k, :], 1e-10) *
+                np.maximum(paph_old[k + 1, :], 1e-10)
+            )
+        paph_new[2 * klev, :] = paph_old[klev, :]
+    else:
+        # Equal-pressure subdivision: each coarse interval split into <factor>
+        # sub-intervals. For odd factor the central fine full level (arith mean
+        # of its half-levels) coincides with the coarse full level, so restrict
+        # is a subsample of the central sub-cell (no averaging).
+        for k in range(klev):
+            for j in range(factor):
+                frac = j / factor
+                paph_new[factor * k + j, :] = (
+                    paph_old[k, :] + frac * (paph_old[k + 1, :] - paph_old[k, :]))
+        paph_new[factor * klev, :] = paph_old[klev, :]
 
     # PAP: full-level pressures, shape (KLEV, KLON)
     # Define as arithmetic mean of bounding half-levels
@@ -168,7 +180,7 @@ def refine_input(src_path: str, dst_path: str, *, factor: int = 2):
 #  Restrict output.h5  (2·KLEV -> KLEV)
 # ---------------------------------------------------------------------------
 
-def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
+def restrict_output(src_path: str, dst_path: str, klev_coarse: int, factor: int = 2):
     """Restrict a refined-grid CLOUDSC output back to the coarse grid.
 
     The output file contains step groups, each with PT, PQ, PA, PCLV
@@ -198,7 +210,7 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
     first = src[step_groups[0]]
     pt_shape = first["PT"].shape
     # Find the KLEV axis: it's the one with 2*klev_coarse elements
-    klev_fine = 2 * klev_coarse
+    klev_fine = factor * klev_coarse
     klev_axis = None
     for i, s in enumerate(pt_shape):
         if s == klev_fine:
@@ -214,10 +226,17 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
     print(f"  Restricting to KLEV_coarse={klev_coarse}  ({len(step_groups)} steps)")
 
     def avg_restrict(data, ax):
-        """Average even/odd slices along axis ax."""
+        """Average even/odd slices along axis ax (factor-2 full weighting)."""
         even = np.take(data, range(0, data.shape[ax], 2), axis=ax)
         odd = np.take(data, range(1, data.shape[ax], 2), axis=ax)
         return 0.5 * (even + odd)
+
+    def sub_restrict(data, ax):
+        """Subsample the central sub-cell of each coarse cell (odd factor)."""
+        idx = list(range(factor // 2, data.shape[ax], factor))
+        return np.take(data, idx, axis=ax)
+
+    restr = avg_restrict if factor == 2 else sub_restrict
 
     for gname in step_groups:
         grp_src = src[gname]
@@ -227,7 +246,7 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
             if var not in grp_src:
                 continue
             data = grp_src[var][:]
-            grp_dst.create_dataset(var, data=avg_restrict(data, klev_axis))
+            grp_dst.create_dataset(var, data=restr(data, klev_axis))
 
         if "PCLV" in grp_src:
             data = grp_src["PCLV"][:]
@@ -240,7 +259,7 @@ def restrict_output(src_path: str, dst_path: str, klev_coarse: int):
             if pclv_ax is None:
                 print(f"ERROR: Cannot find KLEV axis in PCLV shape {data.shape}", file=sys.stderr)
                 sys.exit(1)
-            grp_dst.create_dataset("PCLV", data=avg_restrict(data, pclv_ax))
+            grp_dst.create_dataset("PCLV", data=restr(data, pclv_ax))
 
     src.close()
     dst.close()
@@ -263,6 +282,7 @@ def main():
         help="Refine input.h5 from KLEV to 2·KLEV levels")
     p_ref.add_argument("src", help="Source input HDF5 file")
     p_ref.add_argument("dst", help="Destination refined HDF5 file")
+    p_ref.add_argument("--factor", type=int, default=2, help="Refinement factor (default 2; use 3 for subsample-compatible)")
 
     # --- restrict ---
     p_res = sub.add_parser("restrict",
@@ -271,13 +291,14 @@ def main():
     p_res.add_argument("dst", help="Destination (coarse-grid) output HDF5 file")
     p_res.add_argument("--klev-coarse", type=int, default=137,
         help="Original coarse KLEV (default: 137)")
+    p_res.add_argument("--factor", type=int, default=2, help="Refinement factor used (2=avg, 3=subsample)")
 
     args = parser.parse_args()
 
     if args.command == "refine":
-        refine_input(args.src, args.dst)
+        refine_input(args.src, args.dst, factor=args.factor)
     elif args.command == "restrict":
-        restrict_output(args.src, args.dst, args.klev_coarse)
+        restrict_output(args.src, args.dst, args.klev_coarse, factor=args.factor)
     else:
         parser.print_help()
         sys.exit(1)
