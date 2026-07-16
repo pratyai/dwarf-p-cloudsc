@@ -134,11 +134,12 @@ Outputs land in `build/`:
 Same as daint; see `SC2026_HOWTO.daint.md` for the full DB / query
 reference. Results land in `cloudsc_results.db`.
 
-## 4. Plots, SASS, ncu
+## 4. SASS + ncu
 
-Same commands as daint (see `SC2026_HOWTO.daint.md` §4–6). The ncu batch
-script `profile_all.sh` needs its SBATCH block edited the same way as
-`run_all.sh`.
+Same commands as daint (see `SC2026_HOWTO.daint.md` §4–5). The ncu batch
+script `profile_all.sh` has no ault-header sibling yet — its SBATCH block
+needs the same edit `run_all.ault.sh` got (`--partition=total`,
+`--nodelist=ault25`, `--gres=gpu:a100:1`, drop the uenv lines).
 
 ## Key differences from daint
 
@@ -151,6 +152,7 @@ script `profile_all.sh` needs its SBATCH block edited the same way as
 | Partition | `-p debug` (30 min) / longer | `-p total` (4 h), `--nodelist=ault25` |
 | Account | `-A g34` | `-A g34` (kept for consistency) |
 | FP16 | supported (paper baseline) | works on 23.3, broken on 21.3 |
+| Grid sizes swept | 1x, 2x, 4x of 163840 columns | 1x only (2x=327k OOMs on 40 GB A100) |
 
 ## Troubleshooting
 
