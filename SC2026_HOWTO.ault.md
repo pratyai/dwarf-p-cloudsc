@@ -95,23 +95,11 @@ Binary: `build/bin/dwarf-cloudsc-gpu-scc-k-caching-multistep.{fp64,fp32,fp16}`
 
 ## 2. Run all configurations
 
-`run_all.sh` on ault needs its SBATCH headers adjusted (partition,
-nodelist, no uenv). Copy and edit before use:
+Use the ault-header variant `run_all.ault.sh` (identical body to
+`run_all.sh`, ault SBATCH block: `--partition=total`,
+`--nodelist=ault25`, `--gres=gpu:a100:1`, no uenv).
 
 ```bash
-cp run_all.sh run_all.ault.sh
-# In run_all.ault.sh, replace the SBATCH block with:
-#   #SBATCH --job-name=cloudsc-runs
-#   #SBATCH --account=g34
-#   #SBATCH --partition=total
-#   #SBATCH --nodelist=ault25
-#   #SBATCH --gres=gpu:a100:1
-#   #SBATCH --nodes=1
-#   #SBATCH --ntasks=1
-#   #SBATCH --exclusive
-#   #SBATCH --time=02:00:00
-#   #SBATCH --output=run_all_%j.log
-
 sbatch run_all.ault.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
 # Defaults: NSTEPS=10, NPROMA=128, TPHYS=120.0, NSUB_COARSE=1, NSUB_FINE=2
 ```
