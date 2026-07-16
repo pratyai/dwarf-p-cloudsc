@@ -5,7 +5,7 @@ spack:
     - "hdf5@1.12: +fortran +hl ~mpi %nvhpc@23.3"
 
   concretizer:
-    unify: true
+    unify: when_possible
     reuse: true
 
   # Site NVHPC on ault only goes up to 21.3, so nvhpc@23.3 is spack-installed
