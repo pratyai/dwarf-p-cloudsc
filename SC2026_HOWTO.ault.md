@@ -76,11 +76,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"     # add to shell rc too
 ```
 
-Then create the venv. Use `--python-preference only-managed` so the venv's
-`python` symlinks to a uv-downloaded interpreter under
-`~/.local/share/uv/python/` (visible on compute nodes) instead of the
-frontend-only system python. Ault compute nodes only ship python3.6, so
-this matters.
+Then create the venv:
 
 ```bash
 uv python install 3.12
@@ -89,25 +85,21 @@ source venv/bin/activate
 uv pip install h5py polars numpy matplotlib
 ```
 
+`--python-preference only-managed` is load-bearing: it points the venv at
+a uv-downloaded interpreter under `~/.local/share/uv/python/`, which the
+compute nodes can see. Without it the venv targets the login node's
+python 3.12, and `ault25` only ships 3.6.
+
 ## Every login
 
-Once the one-time setup above is done, a fresh shell needs only this:
-
 ```bash
-cd /path/to/dwarf-p-cloudsc
-source $SPACK_TREE/spack/share/spack/setup-env.sh    # skip if in your rc
-export PATH="$HOME/.local/bin:$PATH"                 # skip if in your rc
+export SPACK_TREE=$SCRATCH/spack-tree
+export PATH="$HOME/.local/bin:$PATH"
+source $SPACK_TREE/spack/share/spack/setup-env.sh
 ```
 
-No uenv on ault, so that covers everything. `build_all.sh` activates the
-spack env itself; `run_all.ault.sh`, `compare.sh` and `report.sh` activate
-`venv/` themselves.
-
-| Task | spack sourced? | venv? |
-|---|---|---|
-| `ARCH=... ./build_all.sh` | yes | no |
-| `sbatch run_all.ault.sh` | no | no (script does it) |
-| `compare.sh`, `report.sh` | no | no (scripts do it) |
+No uenv on ault, so that covers everything — every script below activates
+`venv/` on its own, and finds the checkout relative to itself.
 
 ## 1. Build all precision variants
 

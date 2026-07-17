@@ -47,9 +47,10 @@ Externals in `arch/cscs/daint/nvhpc/25.1/spack.yaml` bind to paths under
 is active. Every `spack` invocation that touches those externals
 (`concretize`, `install`) must therefore run inside a uenv shell.
 
-Enter one for the whole session:
+Pull the image once, then enter it for the whole session:
 
 ```bash
+uenv image pull icon/25.2:v1@santis
 uenv start --view=default icon/25.2:v1@santis
 ```
 
@@ -75,10 +76,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"     # add to shell rc too
 ```
 
-Then create the venv. Use `--python-preference only-managed` so the venv's
-`python` symlinks to a uv-downloaded interpreter under
-`~/.local/share/uv/python/` (visible on compute nodes) instead of the
-frontend-only system python:
+Then create the venv:
 
 ```bash
 uv python install 3.12
@@ -87,46 +85,31 @@ source venv/bin/activate
 uv pip install h5py polars numpy matplotlib
 ```
 
+`--python-preference only-managed` is load-bearing: it points the venv at
+a uv-downloaded interpreter under `~/.local/share/uv/python/`, which the
+compute nodes can see. Without it the venv targets the system python,
+which exists only on the login node.
+
 ## Every login
 
-Once the one-time setup above is done, a fresh shell needs only this:
-
 ```bash
-cd /path/to/dwarf-p-cloudsc
-source $SPACK_TREE/spack/share/spack/setup-env.sh    # skip if in your rc
+export SPACK_TREE=$SCRATCH/spack-tree
+source $SPACK_TREE/spack/share/spack/setup-env.sh
 ```
 
-That is enough for §2 (`sbatch run_all.sh`) and §3 (`compare.sh`,
-`report.sh`) — those scripts activate `venv/` themselves and need nothing
-from spack.
-
-Building (§1) additionally needs the uenv, because nvfortran physically
-lives under `/user-environment`, which is an empty mount point until the
-uenv is active:
-
-```bash
-uenv start --view=default icon/25.2:v1@santis
-source $SPACK_TREE/spack/share/spack/setup-env.sh    # uenv resets PATH
-./build_all.sh
-exit                                                 # back to plain shell
-```
-
-Do **not** `sbatch` from inside the uenv shell — it fails with
-`libslurm-uenv-mount rc=-3000`. Submit from a plain login shell; the
-`#SBATCH --uenv=` / `#SBATCH --view=` headers in the job script mount the
-uenv on the compute node.
-
-| Task | uenv? | spack sourced? | venv? |
-|---|---|---|---|
-| `build_all.sh` | yes | yes | no |
-| `sbatch run_all.sh` | **no** (headers do it) | no | no (script does it) |
-| `compare.sh`, `report.sh` | no | no | no (scripts do it) |
-| ad-hoc `sqlite3` / notebook on the DB | no | no | your choice |
+Nothing else — every script below activates `venv/` on its own, and finds
+the checkout relative to itself.
 
 ## 1. Build all precision variants
 
+Build only, and only when the source changed. `nvfortran` lives under
+`/user-environment`, an empty mount point until the uenv is active, so
+this step runs inside a uenv shell:
+
 ```bash
+uenv start --view=default icon/25.2:v1@santis
 ./build_all.sh
+exit
 ```
 
 Builds FP16, FP32, FP64 binaries under `build/bin/`. Also extracts
@@ -138,6 +121,11 @@ Note: `build_all.sh` preserves any existing `.h5`/`.csv` output files
 across `--clean` rebuilds.
 
 ## 2. Run all configurations
+
+Submit from a plain login shell, not from a uenv shell — `sbatch` there
+fails with `libslurm-uenv-mount rc=-3000`. The job script's own
+`#SBATCH --uenv=` / `#SBATCH --view=` headers mount the uenv on the
+compute node.
 
 ```bash
 sbatch run_all.sh [--skip-existing] [--spinup N] [NSTEPS] [NPROMA] [TPHYS] [NSUB_COARSE] [NSUB_FINE]
