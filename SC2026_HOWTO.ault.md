@@ -33,8 +33,12 @@ the recipe below assumes a fresh clone for reproducibility.
 
 ### Clone this repo (one-time)
 
+Clone anywhere `ault25` can see — nothing in the scripts pins a path, they
+locate themselves relative to the checkout. Outputs land in `build/` inside
+the checkout and reach ~15 GB per `.h5` at 163840 columns, so pick a
+filesystem with room (`$SCRATCH` is the obvious one).
+
 ```bash
-cd $SCRATCH
 git clone -b sc2026 https://github.com/pratyai/dwarf-p-cloudsc.git
 cd dwarf-p-cloudsc
 ```
@@ -84,6 +88,26 @@ uv venv --python 3.12 --python-preference only-managed venv
 source venv/bin/activate
 uv pip install h5py polars numpy matplotlib
 ```
+
+## Every login
+
+Once the one-time setup above is done, a fresh shell needs only this:
+
+```bash
+cd /path/to/dwarf-p-cloudsc
+source $SPACK_TREE/spack/share/spack/setup-env.sh    # skip if in your rc
+export PATH="$HOME/.local/bin:$PATH"                 # skip if in your rc
+```
+
+No uenv on ault, so that covers everything. `build_all.sh` activates the
+spack env itself; `run_all.ault.sh`, `compare.sh` and `report.sh` activate
+`venv/` themselves.
+
+| Task | spack sourced? | venv? |
+|---|---|---|
+| `ARCH=... ./build_all.sh` | yes | no |
+| `sbatch run_all.ault.sh` | no | no (script does it) |
+| `compare.sh`, `report.sh` | no | no (scripts do it) |
 
 ## 1. Build all precision variants
 

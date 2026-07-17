@@ -31,8 +31,9 @@ Add the `source` + `spack repo add` lines to your shell rc.
 
 ## 2. Clone the repository
 
+Anywhere `ault25` can see, with room for the `build/` outputs.
+
 ```bash
-cd $SCRATCH
 git clone -b sc2026 https://github.com/pratyai/dwarf-p-cloudsc.git
 cd dwarf-p-cloudsc
 ```

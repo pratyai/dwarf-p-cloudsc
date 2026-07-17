@@ -28,10 +28,12 @@ shells see them.
 
 ### Clone this repo (one-time)
 
-Pick any location (e.g. `$SCRATCH`):
+Clone anywhere the compute nodes can see — nothing in the scripts pins a
+path, they locate themselves relative to the checkout. Outputs land in
+`build/` inside the checkout and reach ~15 GB per `.h5` at 163840 columns,
+so pick a filesystem with room (`$SCRATCH` is the obvious one).
 
 ```bash
-cd $SCRATCH
 git clone -b sc2026 https://github.com/pratyai/dwarf-p-cloudsc.git
 cd dwarf-p-cloudsc
 ```
@@ -62,13 +64,7 @@ spack -e cloudsc-gpu install     # ~30 min first time
 spack env activate cloudsc-gpu
 ```
 
-You can leave the uenv shell with `exit`. For later shells that only
-need to *use* the already-built spack packages (no new install), the
-uenv is not strictly required — but activating it does no harm.
-
-For SLURM jobs, use `#SBATCH --uenv=icon/25.2:v1@santis` +
-`#SBATCH --view=default` in the script header (submitting `sbatch` from
-inside a uenv shell is blocked with `libslurm-uenv-mount rc=-3000`).
+Leave the uenv shell with `exit`.
 
 ### Python venv (one-time)
 
@@ -90,6 +86,42 @@ uv venv --python 3.12 --python-preference only-managed venv
 source venv/bin/activate
 uv pip install h5py polars numpy matplotlib
 ```
+
+## Every login
+
+Once the one-time setup above is done, a fresh shell needs only this:
+
+```bash
+cd /path/to/dwarf-p-cloudsc
+source $SPACK_TREE/spack/share/spack/setup-env.sh    # skip if in your rc
+```
+
+That is enough for §2 (`sbatch run_all.sh`) and §3 (`compare.sh`,
+`report.sh`) — those scripts activate `venv/` themselves and need nothing
+from spack.
+
+Building (§1) additionally needs the uenv, because nvfortran physically
+lives under `/user-environment`, which is an empty mount point until the
+uenv is active:
+
+```bash
+uenv start --view=default icon/25.2:v1@santis
+source $SPACK_TREE/spack/share/spack/setup-env.sh    # uenv resets PATH
+./build_all.sh
+exit                                                 # back to plain shell
+```
+
+Do **not** `sbatch` from inside the uenv shell — it fails with
+`libslurm-uenv-mount rc=-3000`. Submit from a plain login shell; the
+`#SBATCH --uenv=` / `#SBATCH --view=` headers in the job script mount the
+uenv on the compute node.
+
+| Task | uenv? | spack sourced? | venv? |
+|---|---|---|---|
+| `build_all.sh` | yes | yes | no |
+| `sbatch run_all.sh` | **no** (headers do it) | no | no (script does it) |
+| `compare.sh`, `report.sh` | no | no | no (scripts do it) |
+| ad-hoc `sqlite3` / notebook on the DB | no | no | your choice |
 
 ## 1. Build all precision variants
 
