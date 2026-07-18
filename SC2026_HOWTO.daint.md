@@ -144,6 +144,21 @@ temporal refinement (NSUB_COARSE vs NSUB_FINE at same NSTEPS). Then runs
 3 spatial refinement configs (KLEV=137 nsub=1, KLEV=274 nsub=1, KLEV=274
 nsub=2) at TPHYS=120, 40960 columns.
 
+`NGPTOTG_BASE` and `GRID_MULTIPLIERS` are env-overridable if you want a
+different column sweep — e.g. to cover every size the 40 GB A100 on ault
+can also reach:
+
+```bash
+NGPTOTG_BASE=40960 GRID_MULTIPLIERS="1 2 4 8 16" sbatch run_all.sh 10 128 120.0 1 2
+```
+
+Pass the same two variables to `compare.sh` so it ingests the sizes you
+actually ran; it defaults to `163840 x{1,2,4}` independently of the run
+script. A perf-only sweep like the one above should skip `--spinup`:
+kernel time is input-independent, and a spun-up grid-loop run at 40960
+would otherwise collide with the spatial-refinement coarse run, which
+uses the plain input at the same size and filename.
+
 Outputs land in `build/`:
 - `cloudsc_output_{prec}_{N}steps_{G}col_{K}lev[_nsubM].h5`
 - `cloudsc_timing_{prec}_{N}steps_{G}col_{K}lev[_nsubM].csv`
@@ -155,9 +170,15 @@ Outputs land in `build/`:
 # Same defaults as run_all.sh
 ```
 
-Takes the same positional args as `run_all.sh`. Ingests timing CSVs, runs
-precision/temporal/spatial comparisons in parallel, and writes results to
-`cloudsc_results.db`. Calls `report.py` at the end.
+Takes the same positional args as `run_all.sh`, and honours the same
+`NGPTOTG_BASE` / `GRID_MULTIPLIERS` env overrides — set them to whatever
+the run used, or it silently ingests only the sizes matching its own
+defaults. Ingests timing CSVs, runs precision/temporal/spatial
+comparisons in parallel, and writes results to `cloudsc_results.db`.
+Calls `report.py` at the end.
+
+It appends rather than replaces, so delete `cloudsc_results.db` first if
+you are re-ingesting a sweep you already ingested once.
 
 ### Report only (no recomputation)
 

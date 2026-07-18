@@ -168,7 +168,7 @@ needs the same edit `run_all.ault.sh` got (`--partition=total`,
 | Partition | `-p debug` (30 min) / longer | `-p total` (4 h), `--nodelist=ault25` |
 | Account | `-A g34` | `-A g34` (kept for consistency) |
 | FP16 | supported (paper baseline) | works on 23.3, broken on 21.3 |
-| Grid sizes swept | 1x, 2x, 4x of 163840 columns | 1x only (2x=327k OOMs on 40 GB A100) |
+| Grid sizes swept | 163840 x{1,2,4} by default | 40960 x{1,2,4}; 327680 OOMs at every precision on the 40 GB A100 |
 
 ## Troubleshooting
 
