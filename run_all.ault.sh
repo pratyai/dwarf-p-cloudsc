@@ -43,9 +43,12 @@ TPHYS=${3:-900.0}
 NSUB_COARSE=${4:-1}
 NSUB_FINE=${5:-2}
 
-# Grid sizes: only 1x on ault A100 (40 GB HBM). 2x=327680 OOMs.
+# Grid sizes on ault A100 (40 GB HBM). FP64 only fits at 1x (2x=327680
+# OOMs); FP32/FP16 have a smaller footprint, so sweep them wider and let
+# any that don't fit OOM out.
 NGPTOTG_BASE=163840
-GRID_MULTIPLIERS=(1)
+GRID_MULTIPLIERS=(1 2 4)
+FP64_MAX_MULT=1
 
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 
@@ -160,10 +163,15 @@ run_config() {
 
   echo ""
   echo ">>> Running ${LABEL}..."
+  local RC=0
   if [ -n "${CLOUDSC_INPUT_ENV}" ]; then
-    env ${CLOUDSC_INPUT_ENV} ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
+    env ${CLOUDSC_INPUT_ENV} ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB} || RC=$?
   else
-    ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB}
+    ${BINARY}.${BIN_EXT} 1 ${NGPTOTG} ${NPROMA} ${STEPS} ${TPHYS} ${NSUB} || RC=$?
+  fi
+  if [ ${RC} -ne 0 ]; then
+    echo ">>> ${LABEL} FAILED (exit ${RC}, likely OOM at ${NGPTOTG} cols) — skipping"
+    return 0
   fi
 
   # Re-check after run
@@ -189,8 +197,12 @@ for MULT in "${GRID_MULTIPLIERS[@]}"; do
   echo "  Grid ${MULT}x: NGPTOTG=${NGPTOTG}"
   echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
 
-  run_config "FP64 coarse (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_COARSE}
-  run_config "FP64 fine (${NSTEPS} steps, nsub=${NSUB_FINE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_FINE}
+  if [ ${MULT} -le ${FP64_MAX_MULT} ]; then
+    run_config "FP64 coarse (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_COARSE}
+    run_config "FP64 fine (${NSTEPS} steps, nsub=${NSUB_FINE}, ${MULT}x)" fp64 ${NSTEPS} ${NSUB_FINE}
+  else
+    echo ">>> Skipping FP64 at ${MULT}x (exceeds 40 GB A100 HBM)"
+  fi
   run_config "FP32 (${NSTEPS} steps, nsub=${NSUB_COARSE}, ${MULT}x)" fp32 ${NSTEPS} ${NSUB_COARSE}
 
   if [ ${HAVE_FP16} -eq 1 ]; then
