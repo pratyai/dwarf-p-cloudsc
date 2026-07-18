@@ -43,12 +43,12 @@ TPHYS=${3:-900.0}
 NSUB_COARSE=${4:-1}
 NSUB_FINE=${5:-2}
 
-# Grid sizes on ault A100 (40 GB HBM). FP64 only fits at 1x (2x=327680
-# OOMs); FP32/FP16 have a smaller footprint, so sweep them wider and let
-# any that don't fit OOM out.
-NGPTOTG_BASE=163840
+# Grid sizes on ault A100 (40 GB HBM). Top size 163840 is the largest that
+# fits FP64 on 40 GB, so base 40960 x{1,2,4} sweeps all precisions
+# uniformly (matches the size set used on daint).
+NGPTOTG_BASE=40960
 GRID_MULTIPLIERS=(1 2 4)
-FP64_MAX_MULT=1
+FP64_MAX_MULT=4
 
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 
