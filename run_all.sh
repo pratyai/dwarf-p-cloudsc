@@ -44,10 +44,12 @@ TPHYS=${3:-900.0}
 NSUB_COARSE=${4:-1}
 NSUB_FINE=${5:-2}
 
-# Grid sizes: 1x, 2x, 4x of the base column count
-# 4x at FP64 ≈ 50 GB, fits in 96 GB GH200 HBM3
-NGPTOTG_BASE=163840
-GRID_MULTIPLIERS=(1 2 4)
+# Grid sizes: multipliers of the base column count.
+# 4x of 163840 at FP64 ≈ 50 GB, fits in 96 GB GH200 HBM3.
+# Both are env-overridable, e.g. to sweep the same sizes ault can reach:
+#   NGPTOTG_BASE=40960 GRID_MULTIPLIERS="1 2 4 8 16" sbatch run_all.sh ...
+NGPTOTG_BASE=${NGPTOTG_BASE:-163840}
+read -r -a GRID_MULTIPLIERS <<< "${GRID_MULTIPLIERS:-1 2 4}"
 
 BINARY=bin/dwarf-cloudsc-gpu-scc-k-caching-multistep
 
