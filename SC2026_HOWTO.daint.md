@@ -329,36 +329,6 @@ sbatch run_all.sh --spinup 3 10 128 120.0 1 2      # ~20 min
 ./sass_stats.sh                                    # instant
 ```
 
-## Packaging the Zenodo A2 artifact
+## Packaging the Zenodo artifact
 
-The A2 tarball on Zenodo (record 19708601, `A2-cloudsc-sc2026.tar.gz`)
-is the `sc2026` branch tree with build/, install/, generated inputs and
-outputs stripped. To cut a fresh version of the artifact:
-
-```bash
-git clone -b sc2026 https://github.com/pratyai/dwarf-p-cloudsc.git \
-    A2-cloudsc-sc2026
-cd A2-cloudsc-sc2026
-git log -1 --format=%H > COMMIT_HASH.txt        # provenance stamp
-
-# Strip everything a fresh clone doesn't need to reproduce.
-rm -rf .git build source ecbundle ptx venv profile figs
-find . -name '__pycache__' -type d -exec rm -rf {} +
-find . -name '*.pyc' -delete
-rm -f cloudsc_results.db config-files/input_spunup.h5 \
-      config-files/input_2xklev.h5 config-files/input_spunup_2xklev.h5
-rm -f run_all_*.log
-
-cd ..
-tar czf A2-cloudsc-sc2026.tar.gz A2-cloudsc-sc2026/
-sha256sum A2-cloudsc-sc2026.tar.gz
-```
-
-What ships (from `sc2026` HEAD): source tree, `arch/`, `config-files/input.h5`,
-all `*.sh` and `*.py` drivers, `SC2026_HOWTO.{daint,ault}.md`, `README.md`,
-`CMakeLists.txt`, `cloudsc-bundle`, `bundle.yml`. Reviewers rebuild `venv`,
-run `build_all.sh` + `run_all.sh` + `compare.sh` per the HOWTO.
-
-Upload the tarball as a new version on the existing Zenodo record; keep
-`COMMIT_HASH.txt` inside so the archived artifact is traceable to a git
-SHA even if the branch moves.
+See `ARTIFACT_PACKING.md`.
