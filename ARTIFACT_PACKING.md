@@ -51,7 +51,7 @@ cd <dwarf-p-cloudsc-checkout>
 git rev-parse HEAD                      # note this; it is the artifact's provenance
 
 git archive --format=tar \
-    --prefix=A2-cloudsc-sc2026/ \
+    --prefix=dwarf-p-cloudsc/ \
     HEAD \
   | gzip > A2-cloudsc-sc2026.tar.gz
 
@@ -59,7 +59,7 @@ sha256sum A2-cloudsc-sc2026.tar.gz
 ```
 
 Roughly 9 MB. The tarball unpacks into a single top-level
-`A2-cloudsc-sc2026/`, so extraction never scatters files into the current
+`dwarf-p-cloudsc/`, so extraction never scatters files into the current
 directory.
 
 To pack a specific revision rather than the current one, substitute a tag
@@ -71,11 +71,11 @@ or SHA for `HEAD`.
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c '/\.git/'                       # 0
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c '^\._\|/\._'                    # 0
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -cE '/(venv|build|source|ecbundle)/'  # 0
-tar -tzf A2-cloudsc-sc2026.tar.gz | awk -F/ '{print $1}' | sort -u          # A2-cloudsc-sc2026
+tar -tzf A2-cloudsc-sc2026.tar.gz | awk -F/ '{print $1}' | sort -u          # dwarf-p-cloudsc
 
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'config-files/input.h5'         # 1
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'config-files/reference.h5'     # 1
-tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'cloudsc.sass'                  # 4
+tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'cloudsc\.sass'                  # 4
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'cloudsc_results.db'            # 1
 tar -tzf A2-cloudsc-sc2026.tar.gz | grep -c 'SC2026_HOWTO'                  # 2
 ```
@@ -91,9 +91,9 @@ ceiling and its NVHPC 23.3 requirement are written down.
 Revision-pinning checks for the current artifact:
 
 ```bash
-tar -xzOf A2-cloudsc-sc2026.tar.gz A2-cloudsc-sc2026/src/cloudsc_gpu/cloudsc_gpu_scc_k_caching_mod.F90 \
+tar -xzOf A2-cloudsc-sc2026.tar.gz dwarf-p-cloudsc/src/cloudsc_gpu/cloudsc_gpu_scc_k_caching_mod.F90 \
   | grep -c 'ZTP1(JK_I)\*ZESATLIQ'                                          # 1
-tar -xzOf A2-cloudsc-sc2026.tar.gz A2-cloudsc-sc2026/run_all.ault.sh \
+tar -xzOf A2-cloudsc-sc2026.tar.gz dwarf-p-cloudsc/run_all.ault.sh \
   | grep -c 'nodelist=ault25'                                               # 1
 ```
 
