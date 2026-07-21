@@ -19,7 +19,7 @@ export CUDA_VISIBLE_DEVICES=0
 # substeps, comparing FP32 against FP64 and against the temporal and spatial
 # discretization floors. Distinct from run_all.sh, which sweeps many short runs.
 #
-# Produces cloudsc_results_10k.db with four comparisons:
+# Produces cloudsc_10k.db with four comparisons:
 #   precision_fp64v32  FP32 vs FP64 at 16384 columns
 #   temporal_n1v2      FP64 nsub=1 vs nsub=2 (temporal floor)
 #   spatial_411_n1     coarse KLEV=137 vs KLEV=411 restricted (spatial floor)
@@ -72,8 +72,8 @@ NV_ACC_CUDA_STACKSIZE=262144 CLOUDSC_INPUT=input_spunup_3x ${BINARY}.fp64 1 4096
 "${PY}" "${SCRIPT_DIR}/vertical_refine.py" restrict \
   cloudsc_output_fp64_${NSTEPS}steps_4096col_411lev_nsub3.h5 rest_411_n3.h5 --klev-coarse 137 --factor 3
 
-# --- Comparisons into cloudsc_results_10k.db ---
-DB="${SCRIPT_DIR}/cloudsc_results_10k.db"
+# --- Comparisons into cloudsc_10k.db ---
+DB="${SCRIPT_DIR}/cloudsc_10k.db"
 rm -f "${DB}"
 C16=cloudsc_output_fp64_${NSTEPS}steps_16384col_137lev.h5
 "${PY}" "${SCRIPT_DIR}/compare_precision.py" \
