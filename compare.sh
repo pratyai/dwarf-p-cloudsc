@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 BUILD="${SCRIPT_DIR}/build"
-DB="${SCRIPT_DIR}/cloudsc_results.db"
+DB="${SCRIPT_DIR}/${CLOUDSC_DB:-cloudsc_results.db}"
 COMPARE="${SCRIPT_DIR}/compare_precision.py"
 
 NSTEPS=${1:-10}
